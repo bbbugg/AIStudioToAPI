@@ -1,3 +1,4 @@
+/* eslint-disable sort-keys-fix/sort-keys-fix */
 /**
  * ESLint Configuration
  * Enforces code style consistency across the project
@@ -13,6 +14,7 @@ module.exports = {
         ecmaVersion: "latest",
         sourceType: "module",
     },
+    plugins: ["sort-keys-fix"],
     overrides: [
         {
             // Browser environment for client-side scripts
@@ -87,6 +89,9 @@ module.exports = {
         // Require spacing around infix operators
         "space-infix-ops": "error",
 
+        // Disallow multiple empty lines
+        "no-multiple-empty-lines": ["error", { "max": 1 }],
+
         // ==================== Code Quality ====================
         // Warn about unused variables to prevent dead code
         "no-unused-vars": ["warn", {
@@ -135,6 +140,11 @@ module.exports = {
             ignoreUrls: true,
             ignoreStrings: true,
             ignoreTemplateLiterals: true,
+        }],
+
+        // Enforce sorted object keys (fixable), run `npx eslint --fix .`
+        "sort-keys-fix/sort-keys-fix": ["error", "asc", {
+            caseSensitive: false, natural: true,
         }],
     },
 };

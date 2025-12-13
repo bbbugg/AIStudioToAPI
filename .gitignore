@@ -1,4 +1,6 @@
 .vscode/
+.idea/
+.cursor/
 .DS_Store
 
 # Environment variables (keep .env.example)
