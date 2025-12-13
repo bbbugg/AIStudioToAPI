@@ -283,6 +283,9 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-lite:streamGen
 - `API_KEYS`: Comma-separated list of valid API keys for authentication
 - `PORT`: API server port (default: 7860)
 - `HOST`: Server listening host address (default: 0.0.0.0)
+- `STREAMING_MODE`: Streaming mode (default: `real`)
+  - `real`: True streaming - directly forwards streaming responses from AI Studio to client
+  - `fake`: Simulated streaming - requests AI Studio in non-streaming mode, then converts the complete response to streaming format for the client
 - `SECURE_COOKIES`: Enable secure cookies (HTTPS only)
   - Set to `true`: Only HTTPS connections can login (for production with SSL certificates)
   - Set to `false` or leave unset: Both HTTP and HTTPS can login (default, beginner-friendly)
@@ -291,6 +294,12 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-lite:streamGen
   - Supports any size; common sizes are 16x16, 32x32, 48x48 (ICO/PNG) or vector (SVG)
   - Example: `https://example.com/favicon.ico`
   - If not set, no favicon will be displayed
+- `FORCE_THINKING`: Force enable thinking mode for all requests (default: false)
+  - When set to `true`, all requests will use thinking mode regardless of client settings
+- `FORCE_WEB_SEARCH`: Force enable web search for all requests (default: false)
+  - When set to `true`, all requests will include web search capability
+- `FORCE_URL_CONTEXT`: Force enable URL context for all requests (default: false)
+  - When set to `true`, all requests will include URL context capability
 
 ### 🧠 Model Configuration
 
