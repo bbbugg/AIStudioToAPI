@@ -120,7 +120,7 @@ class ProxyServerSystem extends EventEmitter {
                 "/api/set-mode", "/api/toggle-force-thinking", "/api/toggle-force-web-search", "/api/toggle-force-url-context"];
 
             // Skip authentication for static files
-            const staticPrefixes = ["/styles/", "/AIStudio_icon.svg", "/AIStudio_logo.svg", "/login.js", "/status.js"];
+            const staticPrefixes = ["/styles/", "/AIStudio_logo.svg", "/AIStudio_logo.svg", "/login.js", "/status.js"];
             const isStaticFile = staticPrefixes.some(prefix => req.path.startsWith(prefix) || req.path === prefix);
 
             if (whitelistPaths.includes(req.path) || isStaticFile) {

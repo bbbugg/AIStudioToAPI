@@ -172,7 +172,7 @@ This endpoint is forwarded to the official Gemini API format endpoint.
 | `API_KEYS` | Comma-separated list of valid API keys for authentication. | `123456` |
 | `PORT` | API server port. | `7860` |
 | `HOST` | Server listening host address. | `0.0.0.0` |
-| `ICON_URL` | Custom favicon URL for the console. Supports ICO, PNG, SVG, etc. | `/AIStudio_icon.svg` |
+| `ICON_URL` | Custom favicon URL for the console. Supports ICO, PNG, SVG, etc. | `/AIStudio_logo.svg` |
 | `SECURE_COOKIES` | Enable secure cookies. `true` for HTTPS only, `false` for both HTTP and HTTPS. | `false` |
 
 #### 🌐 Proxy Configuration

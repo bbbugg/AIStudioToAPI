@@ -204,7 +204,7 @@ class WebRoutes {
 
         // Favicon endpoint (public, no authentication required)
         app.get("/favicon.ico", (req, res) => {
-            const iconUrl = process.env.ICON_URL || "/AIStudio_icon.svg";
+            const iconUrl = process.env.ICON_URL || "/AIStudio_logo.svg";
 
             // Redirect to the configured icon URL (default: local SVG icon)
             // This supports any icon format (ICO, PNG, SVG, etc.) and any size

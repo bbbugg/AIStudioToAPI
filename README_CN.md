@@ -172,7 +172,7 @@ sudo docker compose down
 | `API_KEYS` | 用于身份验证的有效 API 密钥列表（使用逗号分隔）。 | `123456` |
 | `PORT` | API 服务器端口。 | `7860` |
 | `HOST` | 服务器监听的主机地址。 | `0.0.0.0` |
-| `ICON_URL` | 用于自定义控制台的 favicon 图标。支持 ICO, PNG, SVG 等格式。 | `/AIStudio_icon.svg` |
+| `ICON_URL` | 用于自定义控制台的 favicon 图标。支持 ICO, PNG, SVG 等格式。 | `/AIStudio_logo.svg` |
 | `SECURE_COOKIES` | 是否启用安全 Cookie。`true` 表示仅支持 HTTPS 协议访问控制台。 | `false` |
 
 #### 🌐 代理配置
