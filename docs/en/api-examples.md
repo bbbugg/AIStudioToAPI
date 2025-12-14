@@ -38,27 +38,7 @@ curl -X POST http://localhost:7860/v1/chat/completions \
   }'
 ```
 
-### 🖼️ 生成图片
-
-#### 流式生成图片
-
-```bash
-curl -X POST http://localhost:7860/v1/chat/completions \ 
-  -H "Content-Type: application/json" \ 
-  -H "Authorization: Bearer your-api-key-1" \ 
-  -d '{ 
-    "model": "gemini-2.5-flash-image", 
-    "messages": [ 
-      { 
-        "role": "user", 
-        "content": "Generate a kitten" 
-      } 
-    ], 
-    "stream": false
-  }'
-```
-
-#### 非流式生成图片
+### 🖼️ Generate Image
 
 ```bash
 curl -X POST http://localhost:7860/v1/chat/completions \ 
@@ -73,6 +53,24 @@ curl -X POST http://localhost:7860/v1/chat/completions \
       } 
     ], 
     "stream": true
+  }'
+```
+
+#### 🫗 Stream Generation
+
+```bash
+curl -X POST http://localhost:7860/v1/chat/completions \ 
+  -H "Content-Type: application/json" \ 
+  -H "Authorization: Bearer your-api-key-1" \ 
+  -d '{ 
+    "model": "gemini-2.5-flash-image", 
+    "messages": [ 
+      { 
+        "role": "user", 
+        "content": "Generate a kitten" 
+      } 
+    ], 
+    "stream": false
   }'
 ```
 
@@ -116,12 +114,10 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-lite:streamGen
   }'
 ```
 
-### 🖼️ 生成图片
-
-#### 流式生成图片
+### 🖼️ Generate Image
 
 ```bash
-curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-image:streamGenerateContent?alt=sse \
+curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-image:generateContent \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key-1" \
   -d '{
@@ -138,10 +134,10 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-image:streamGe
   }'
 ```
 
-#### 非流式生成图片
+#### 🫗 Stream Generation
 
 ```bash
-curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-image:generateContent \
+curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-image:streamGenerateContent?alt=sse \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key-1" \
   -d '{
