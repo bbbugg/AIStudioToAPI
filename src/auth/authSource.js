@@ -43,6 +43,35 @@ class AuthSource {
         }
     }
 
+    removeAuth(index) {
+        if (this.authMode !== "file") {
+            throw new Error("Account deletion is only supported when using file-based auth.");
+        }
+        if (!Number.isInteger(index)) {
+            throw new Error("Invalid account index.");
+        }
+
+        const authFilePath = path.join(process.cwd(), "configs", "auth", `auth-${index}.json`);
+        if (!fs.existsSync(authFilePath)) {
+            throw new Error(`Auth file for account #${index} does not exist.`);
+        }
+
+        try {
+            fs.unlinkSync(authFilePath);
+        } catch (error) {
+            throw new Error(`Failed to delete auth file for account #${index}: ${error.message}`);
+        }
+
+        this.accountNameMap.delete(index);
+        this.initialIndices = this.initialIndices.filter(i => i !== index);
+        this.availableIndices = this.availableIndices.filter(i => i !== index);
+
+        return {
+            remainingAccounts: this.availableIndices.length,
+            removedIndex: index,
+        };
+    }
+
     _discoverAvailableIndices() {
         let indices = [];
         if (this.authMode === "env") {

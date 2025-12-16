@@ -13,8 +13,26 @@ module.exports = {
         ecmaVersion: "latest",
         sourceType: "module",
     },
-    plugins: ["sort-keys-fix"],
+    plugins: ["sort-keys-fix", "jsonc"],
     overrides: [
+        {
+            // JSON files in locales directory - enforce sorted keys
+            files: ["locales/*.json"],
+            extends: ["plugin:jsonc/recommended-with-json"],
+            parser: "jsonc-eslint-parser",
+            rules: {
+                "jsonc/sort-keys": ["error", "asc", {
+                    caseSensitive: false,
+                    natural: true,
+                }],
+                "jsonc/indent": ["error", 4],
+                "jsonc/key-spacing": ["error", {
+                    beforeColon: false,
+                    afterColon: true,
+                }],
+                "jsonc/comma-dangle": ["error", "never"],
+            },
+        },
         {
             // Browser environment for client-side scripts
             files: ["src/browser/*.js"],

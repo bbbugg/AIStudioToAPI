@@ -4,13 +4,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="title">Google AI Studio Proxy - Login</title>
+    <title data-i18n="loginTitle">Google AI Studio Proxy - Login</title>
     <link rel="stylesheet" href="/styles/login.css">
 </head>
 
 <body>
     <form action="/login" method="post">
-        <button type="button" class="lang-switcher" onclick="toggleLanguage()" title="Switch Language">
+        <button type="button" class="lang-switcher" onclick="toggleLanguage()" data-i18n-title="switchLanguage" title="Switch Language">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m5 8 6 6"></path>
@@ -22,7 +22,7 @@
             </svg>
         </button>
         <div style="width: 280px;">
-            <h2 data-i18n="heading" style="color: rgb(50, 50, 50);">Please enter API Key</h2>
+            <h2 data-i18n="loginHeading" style="color: rgb(50, 50, 50);">Please enter API Key</h2>
             <div>
                 <input type="password" name="apiKey" data-i18n-placeholder="apiKeyPlaceholder" placeholder="API Key"
                     required autofocus>
@@ -33,6 +33,7 @@
         </div>
         {{errorMessageHtml}}
     </form>
+    <script src="/utils/i18n.js"></script>
     <script src="/login.js"></script>
 </body>
 

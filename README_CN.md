@@ -65,7 +65,7 @@ npm run setup-auth
 - 手动登录你的 Google 账号
 - 将身份验证凭据保存到 `configs/auth/auth-N.json`（其中 N 是从 0 开始自动递增的索引）
 
-**工作原理**：脚本使用浏览器自动化技术捕获您的 AI Studio 会话 Cookie 和令牌，并将它们安全地存储在 JSON 文件中。认证文件使用自动递增的索引命名（auth-0.json、auth-1.json 等）以支持多个账户。这样 API 就可以在服务器上进行经过身份验证的请求，而无需交互式登录。
+**工作原理**：脚本使用浏览器自动化技术捕获您的 AI Studio 会话 Cookie 和令牌，并将它们安全地存储在 JSON 文件中。认证文件使用自动递增的索引命名（auth-0.json、auth-1.json 等）以支持多个账号。这样 API 就可以在服务器上进行经过身份验证的请求，而无需交互式登录。
 
 3. 找到身份验证文件：
 ```powershell

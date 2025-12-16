@@ -122,16 +122,28 @@ pre {
     }
 
     button {
-        background-color: @primary-color;
-        color: @background-white;
+        background: transparent;
+        border: none;
+        color: @text-secondary;
+        min-height: auto;
+        padding: @spacing-xs;
+
+        svg {
+            display: block;
+        }
 
         &:hover:not(:disabled) {
-            opacity: 0.85;
+            color: @primary-color;
+            transform: scale(1.1);
         }
 
         &:disabled {
-            background-color: lighten(@primary-color, 10%);
-            border-color: lighten(@primary-color, 10%);
+            opacity: 0.5;
+        }
+
+        // Delete button uses error color on hover
+        &:last-child:hover:not(:disabled) {
+            color: @error-color;
         }
     }
 }

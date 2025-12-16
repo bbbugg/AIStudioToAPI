@@ -116,14 +116,29 @@ class ProxyServerSystem extends EventEmitter {
         return (req, res, next) => {
             // Whitelist paths that don't require API key authentication
             // Note: /, /api/status use session authentication instead
-            const whitelistPaths = ["/", "/favicon.ico", "/login", "/health", "/api/status", "/api/switch-account",
-                "/api/set-mode", "/api/toggle-force-thinking", "/api/toggle-force-web-search", "/api/toggle-force-url-context"];
+            const whitelistPaths = ["/", "/favicon.ico", "/login", "/health", "/api/status", "/api/accounts/current",
+                "/api/settings/streaming-mode", "/api/settings/force-thinking", "/api/settings/force-web-search", "/api/settings/force-url-context"];
+
+            // Whitelist path patterns (regex)
+            const whitelistPatterns = [
+                /^\/api\/accounts\/\d+$/, // Matches /api/accounts/:index for DELETE operations
+            ];
 
             // Skip authentication for static files
-            const staticPrefixes = ["/styles/", "/AIStudio_logo.svg", "/AIStudio_logo.svg", "/login.js", "/status.js"];
+            const staticPrefixes = [
+                "/styles/",
+                "/AIStudio_logo.svg",
+                "/AIStudio_logo.svg",
+                "/login.js",
+                "/status.js",
+                "/vueApp.js",
+                "/utils/",
+                "/locales/",
+            ];
             const isStaticFile = staticPrefixes.some(prefix => req.path.startsWith(prefix) || req.path === prefix);
+            const isWhitelistedPattern = whitelistPatterns.some(pattern => pattern.test(req.path));
 
-            if (whitelistPaths.includes(req.path) || isStaticFile) {
+            if (whitelistPaths.includes(req.path) || isStaticFile || isWhitelistedPattern) {
                 return next();
             }
 
@@ -241,6 +256,9 @@ class ProxyServerSystem extends EventEmitter {
         // Serve static files from public directory (compiled CSS, images, etc.)
         const path = require("path");
         app.use(express.static(path.join(__dirname, "..", "public")));
+
+        // Serve locales for front-end only translations
+        app.use("/locales", express.static(path.join(__dirname, "..", "locales")));
 
         // Serve static files from views directory (client-side JS files)
         app.use(express.static(path.join(__dirname, "..", "views")));

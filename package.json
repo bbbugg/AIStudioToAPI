@@ -36,6 +36,7 @@
     "devDependencies": {
         "cross-env": "^7.0.3",
         "eslint": "^8.57.1",
+        "eslint-plugin-jsonc": "^2.18.2",
         "eslint-plugin-sort-keys-fix": "^1.1.2",
         "husky": "^8.0.3",
         "less": "^4.4.2",
@@ -50,6 +51,7 @@
     },
     "lint-staged": {
         "*.{js,jsx,ts,tsx}": "eslint --fix",
+        "locales/*.json": "eslint --fix",
         "views/**/*.{css,less}": "stylelint --fix"
     }
 }

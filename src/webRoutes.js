@@ -270,7 +270,8 @@ class WebRoutes {
             res.json(this._getStatusData());
         });
 
-        app.post("/api/switch-account", isAuthenticated, async (req, res) => {
+        // RESTful API: PUT /api/accounts/current - Switch to a specific account or next account
+        app.put("/api/accounts/current", isAuthenticated, async (req, res) => {
             try {
                 const { targetIndex } = req.body;
                 if (targetIndex !== undefined && targetIndex !== null) {
@@ -312,7 +313,45 @@ class WebRoutes {
             }
         });
 
-        app.post("/api/set-mode", isAuthenticated, (req, res) => {
+        app.delete("/api/accounts/:index", isAuthenticated, (req, res) => {
+            const rawIndex = req.params.index;
+            const targetIndex = Number(rawIndex);
+            const currentAuthIndex = this.serverSystem.requestHandler.currentAuthIndex;
+
+            if (!Number.isInteger(targetIndex)) {
+                return res.status(400).send("Invalid account index.");
+            }
+
+            if (targetIndex === currentAuthIndex) {
+                return res.status(400).send("Cannot delete the currently running account.");
+            }
+
+            const { authSource } = this.serverSystem;
+
+            if (!authSource.availableIndices.includes(targetIndex)) {
+                return res.status(404).send(`Account #${targetIndex} not found or already removed.`);
+            }
+
+            try {
+                authSource.removeAuth(targetIndex);
+                this.logger.warn(
+                    `[WebUI] Account #${targetIndex} deleted via web interface. Current account: #${currentAuthIndex}`
+                );
+
+                const statusData = this._getStatusData();
+
+                return res.status(200).json({
+                    accountDetails: statusData.status.accountDetails,
+                    currentAuthIndex: statusData.status.currentAuthIndex,
+                    message: `Account #${targetIndex} deleted successfully.`,
+                });
+            } catch (error) {
+                this.logger.error(`[WebUI] Failed to delete account #${targetIndex}: ${error.message}`);
+                return res.status(500).send(error.message);
+            }
+        });
+
+        app.put("/api/settings/streaming-mode", isAuthenticated, (req, res) => {
             const newMode = req.body.mode;
             if (newMode === "fake" || newMode === "real") {
                 this.serverSystem.streamingMode = newMode;
@@ -325,21 +364,21 @@ class WebRoutes {
             }
         });
 
-        app.post("/api/toggle-force-thinking", isAuthenticated, (req, res) => {
+        app.put("/api/settings/force-thinking", isAuthenticated, (req, res) => {
             this.serverSystem.forceThinking = !this.serverSystem.forceThinking;
             const statusText = this.serverSystem.forceThinking ? "Enabled" : "Disabled";
             this.logger.info(`[WebUI] Force thinking toggle switched to: ${statusText}`);
             res.status(200).send(`Force thinking mode: ${statusText}`);
         });
 
-        app.post("/api/toggle-force-web-search", isAuthenticated, (req, res) => {
+        app.put("/api/settings/force-web-search", isAuthenticated, (req, res) => {
             this.serverSystem.forceWebSearch = !this.serverSystem.forceWebSearch;
             const statusText = this.serverSystem.forceWebSearch ? "Enabled" : "Disabled";
             this.logger.info(`[WebUI] Force web search toggle switched to: ${statusText}`);
             res.status(200).send(`Force web search: ${statusText}`);
         });
 
-        app.post("/api/toggle-force-url-context", isAuthenticated, (req, res) => {
+        app.put("/api/settings/force-url-context", isAuthenticated, (req, res) => {
             this.serverSystem.forceUrlContext = !this.serverSystem.forceUrlContext;
             const statusText = this.serverSystem.forceUrlContext ? "Enabled" : "Disabled";
             this.logger.info(`[WebUI] Force URL context toggle switched to: ${statusText}`);
