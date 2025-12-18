@@ -28,10 +28,10 @@ server {
         # Critical: Pass real client IP
         # X-Real-IP: Highest priority, contains the real client IP
         proxy_set_header X-Real-IP $remote_addr;
-        
+
         # X-Forwarded-For: Contains the complete proxy chain
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        
+
         # Other necessary proxy headers
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -70,11 +70,11 @@ sudo systemctl restart nginx
 # Inner Nginx (internal gateway) configuration example
 location / {
     proxy_pass http://127.0.0.1:7860;
-    
+
     # Critical: Pass through upstream X-Real-IP, do NOT override with $remote_addr
     proxy_set_header X-Real-IP $http_x_real_ip;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    
+
     # Other necessary proxy headers
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;

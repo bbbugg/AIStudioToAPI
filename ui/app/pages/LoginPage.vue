@@ -9,12 +9,7 @@
 <template>
     <div class="login-page">
         <form action="/login" method="post" class="login-form">
-            <button
-                type="button"
-                class="lang-switcher"
-                :title="t('switchLanguage')"
-                @click="toggleLanguage"
-            >
+            <button type="button" class="lang-switcher" :title="t('switchLanguage')" @click="toggleLanguage">
                 <svg
                     xmlns="http://www.w3.org/2000/svg"
                     width="24"
@@ -36,20 +31,14 @@
             </button>
             <div class="login-content">
                 <h2 class="login-title">
-                    {{ t('loginHeading') }}
+                    {{ t("loginHeading") }}
                 </h2>
                 <div>
-                    <input
-                        type="password"
-                        name="apiKey"
-                        :placeholder="t('apiKeyPlaceholder')"
-                        required
-                        autofocus
-                    >
+                    <input type="password" name="apiKey" :placeholder="t('apiKeyPlaceholder')" required autofocus />
                 </div>
                 <div>
                     <button type="submit">
-                        {{ t('loginBtn') }}
+                        {{ t("loginBtn") }}
                     </button>
                 </div>
             </div>
@@ -105,7 +94,7 @@ watchEffect(() => {
 </script>
 
 <style lang="less" scoped>
-@import '../styles/variables.less';
+@import "../styles/variables.less";
 
 .login-page {
     display: flex;

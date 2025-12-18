@@ -29,7 +29,9 @@ class AuthRoutes {
         this.rateLimitMaxAttempts = parseInt(process.env.RATE_LIMIT_MAX_ATTEMPTS) || 5;
 
         if (this.rateLimitEnabled) {
-            this.logger.info(`[Auth] Rate limiting enabled: ${this.rateLimitMaxAttempts} attempts per ${this.rateLimitWindow} minutes`);
+            this.logger.info(
+                `[Auth] Rate limiting enabled: ${this.rateLimitMaxAttempts} attempts per ${this.rateLimitWindow} minutes`
+            );
         } else {
             this.logger.info("[Auth] Rate limiting disabled");
         }
@@ -150,7 +152,8 @@ class AuthRoutes {
                     this.logger.warn(`[Auth] Failed login attempt from IP: ${ip} (${attempts.count}/${MAX_ATTEMPTS})`);
 
                     // Periodic cleanup: remove expired entries from other IPs
-                    if (Math.random() < 0.1) { // 10% chance to trigger cleanup
+                    if (Math.random() < 0.1) {
+                        // 10% chance to trigger cleanup
                         this._cleanupExpiredAttempts(now, RATE_LIMIT_WINDOW);
                     }
                 } else {
@@ -168,13 +171,11 @@ class AuthRoutes {
             req.session.destroy(err => {
                 if (err) {
                     this.logger.error(`[Auth] Session destruction failed for IP ${ip}: ${err.message}`);
-                    return res.status(500)
-                        .json({ message: "logoutFailed" });
+                    return res.status(500).json({ message: "logoutFailed" });
                 }
                 this.logger.info(`[Auth] User logged out from IP: ${ip}`);
                 res.clearCookie("connect.sid");
-                res.status(200)
-                    .json({ message: "logoutSuccess" });
+                res.status(200).json({ message: "logoutSuccess" });
             });
         });
 

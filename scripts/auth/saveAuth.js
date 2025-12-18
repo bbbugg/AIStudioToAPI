@@ -119,9 +119,7 @@ const getNextAuthIndex = () => {
         }
 
         if (accountName === "unknown") {
-            console.log(
-                `   -> Iterated through all ${count} <script> tags, but no Email found.`
-            );
+            console.log(`   -> Iterated through all ${count} <script> tags, but no Email found.`);
         }
     } catch (error) {
         console.warn(`⚠️  Unable to automatically retrieve account name (error during V3 scan).`);
@@ -137,21 +135,15 @@ const getNextAuthIndex = () => {
     const lineCount = prettyStateString.split("\n").length;
 
     if (lineCount > VALIDATION_LINE_THRESHOLD) {
-        console.log(
-            `✅ State validation passed (${lineCount} lines > ${VALIDATION_LINE_THRESHOLD} lines).`
-        );
+        console.log(`✅ State validation passed (${lineCount} lines > ${VALIDATION_LINE_THRESHOLD} lines).`);
 
         const compactStateString = JSON.stringify(currentState);
         const authFilePath = path.join(configDirPath, authFileName);
 
         fs.writeFileSync(authFilePath, compactStateString);
-        console.log(
-            `   📄 Authentication file saved to: ${path.join(CONFIG_DIR, authFileName)}`
-        );
+        console.log(`   📄 Authentication file saved to: ${path.join(CONFIG_DIR, authFileName)}`);
     } else {
-        console.log(
-            `❌ State validation failed (${lineCount} lines <= ${VALIDATION_LINE_THRESHOLD} lines).`
-        );
+        console.log(`❌ State validation failed (${lineCount} lines <= ${VALIDATION_LINE_THRESHOLD} lines).`);
         console.log("   Login status appears to be empty or invalid, file was not saved.");
         console.log("   Please make sure you are fully logged in before pressing Enter.");
     }

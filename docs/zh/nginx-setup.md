@@ -27,10 +27,10 @@ server {
 
         # X-Real-IP: 传递真实客户端 IP
         proxy_set_header X-Real-IP $remote_addr;
-        
+
         # X-Forwarded-For: 包含完整的代理链
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        
+
         # 其他必要的代理头
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -69,11 +69,11 @@ sudo systemctl restart nginx
 # 内层 Nginx（内网网关）配置示例
 location / {
     proxy_pass http://127.0.0.1:7860;
-    
+
     # 关键：透传上游的 X-Real-IP，不要用 $remote_addr 覆盖
     proxy_set_header X-Real-IP $http_x_real_ip;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    
+
     # 其他必要的代理头
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;

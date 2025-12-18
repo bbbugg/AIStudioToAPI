@@ -41,17 +41,17 @@ curl -X POST http://localhost:7860/v1/chat/completions \
 ### 🖼️ 生成图片
 
 ```bash
-curl -X POST http://localhost:7860/v1/chat/completions \ 
-  -H "Content-Type: application/json" \ 
-  -H "Authorization: Bearer your-api-key-1" \ 
-  -d '{ 
-    "model": "gemini-2.5-flash-image", 
-    "messages": [ 
-      { 
-        "role": "user", 
-        "content": "生成一只小猫" 
-      } 
-    ], 
+curl -X POST http://localhost:7860/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "model": "gemini-2.5-flash-image",
+    "messages": [
+      {
+        "role": "user",
+        "content": "生成一只小猫"
+      }
+    ],
     "stream": false
   }'
 ```
@@ -59,17 +59,17 @@ curl -X POST http://localhost:7860/v1/chat/completions \
 #### 🫗 流式生成
 
 ```bash
-curl -X POST http://localhost:7860/v1/chat/completions \ 
-  -H "Content-Type: application/json" \ 
-  -H "Authorization: Bearer your-api-key-1" \ 
-  -d '{ 
-    "model": "gemini-2.5-flash-image", 
-    "messages": [ 
-      { 
-        "role": "user", 
-        "content": "生成一只小猫" 
-      } 
-    ], 
+curl -X POST http://localhost:7860/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "model": "gemini-2.5-flash-image",
+    "messages": [
+      {
+        "role": "user",
+        "content": "生成一只小猫"
+      }
+    ],
     "stream": true
   }'
 ```

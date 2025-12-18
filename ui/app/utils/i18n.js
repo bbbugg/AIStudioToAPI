@@ -115,7 +115,9 @@ const t = (key, options) => {
     let text = langData[key] || (options && options.fallback) || key;
 
     if (typeof options === 'object' && options !== null) {
-        text = text.replace(/\{(\w+)}/g, (match, placeholder) => options[placeholder] !== undefined ? options[placeholder] : match);
+        text = text.replace(/\{(\w+)}/g, (match, placeholder) =>
+            options[placeholder] !== undefined ? options[placeholder] : match
+        );
     }
 
     return text;

@@ -30,12 +30,8 @@ class ConnectionRegistry extends EventEmitter {
         }
 
         this.connections.add(websocket);
-        this.logger.info(
-            `[Server] Internal WebSocket client connected (from: ${clientInfo.address})`
-        );
-        websocket.on("message", data =>
-            this._handleIncomingMessage(data.toString())
-        );
+        this.logger.info(`[Server] Internal WebSocket client connected (from: ${clientInfo.address})`);
+        websocket.on("message", data => this._handleIncomingMessage(data.toString()));
         websocket.on("close", () => this._removeConnection(websocket));
         websocket.on("error", error =>
             this.logger.error(`[Server] Internal WebSocket connection error: ${error.message}`)

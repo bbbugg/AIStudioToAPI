@@ -23,7 +23,8 @@ class FormatConverter {
     /**
      * Convert OpenAI request format to Google Gemini format
      */
-    async translateOpenAIToGoogle(openaiBody) { // eslint-disable-line no-unused-vars
+    async translateOpenAIToGoogle(openaiBody) {
+        // eslint-disable-line no-unused-vars
         this.logger.info("[Adapter] Starting translation of OpenAI request format to Google format...");
         this.streamUsage = null; // Reset usage cache for new stream
 
@@ -31,12 +32,9 @@ class FormatConverter {
         const googleContents = [];
 
         // Extract system messages
-        const systemMessages = openaiBody.messages.filter(
-            msg => msg.role === "system"
-        );
+        const systemMessages = openaiBody.messages.filter(msg => msg.role === "system");
         if (systemMessages.length > 0) {
-            const systemContent = systemMessages.map(msg => msg.content)
-                .join("\n");
+            const systemContent = systemMessages.map(msg => msg.content).join("\n");
             systemInstruction = {
                 parts: [{ text: systemContent }],
                 role: "system",
@@ -44,9 +42,7 @@ class FormatConverter {
         }
 
         // Convert conversation messages
-        const conversationMessages = openaiBody.messages.filter(
-            msg => msg.role !== "system"
-        );
+        const conversationMessages = openaiBody.messages.filter(msg => msg.role !== "system");
         for (const message of conversationMessages) {
             const googleParts = [];
 
@@ -86,7 +82,10 @@ class FormatConverter {
                                 });
                                 this.logger.info(`[Adapter] Successfully downloaded and converted image to base64.`);
                             } catch (error) {
-                                this.logger.error(`[Adapter] Failed to download or process image from URL: ${dataUrl}`, error);
+                                this.logger.error(
+                                    `[Adapter] Failed to download or process image from URL: ${dataUrl}`,
+                                    error
+                                );
                                 // Optionally, push an error message as text
                                 googleParts.push({ text: `[System Note: Failed to load image from ${dataUrl}]` });
                             }
@@ -120,13 +119,13 @@ class FormatConverter {
 
         // Handle thinking config
         const extraBody = openaiBody.extra_body || {};
-        const rawThinkingConfig
-            = extraBody.google?.thinking_config
-            || extraBody.google?.thinkingConfig
-            || extraBody.thinkingConfig
-            || extraBody.thinking_config
-            || openaiBody.thinkingConfig
-            || openaiBody.thinking_config;
+        const rawThinkingConfig =
+            extraBody.google?.thinking_config ||
+            extraBody.google?.thinkingConfig ||
+            extraBody.thinkingConfig ||
+            extraBody.thinking_config ||
+            openaiBody.thinkingConfig ||
+            openaiBody.thinking_config;
 
         let thinkingConfig = null;
 
@@ -196,9 +195,7 @@ class FormatConverter {
             }
 
             if (toolsToAdd.length > 0) {
-                this.logger.info(
-                    `[Adapter] ⚠️ Force features enabled, injecting tools: [${toolsToAdd.join(", ")}]`
-                );
+                this.logger.info(`[Adapter] ⚠️ Force features enabled, injecting tools: [${toolsToAdd.join(", ")}]`);
             }
         }
 
@@ -228,8 +225,7 @@ class FormatConverter {
 
         let jsonString = googleChunk;
         if (jsonString.startsWith("data: ")) {
-            jsonString = jsonString.substring(6)
-                .trim();
+            jsonString = jsonString.substring(6).trim();
         }
 
         if (jsonString === "[DONE]") {
@@ -267,9 +263,7 @@ class FormatConverter {
                 );
                 const errorText = `[ProxySystem Error] Request blocked due to safety settings. Finish Reason: ${googleResponse.promptFeedback.blockReason}`;
                 return `data: ${JSON.stringify({
-                    choices: [
-                        { delta: { content: errorText }, finish_reason: "stop", index: 0 },
-                    ],
+                    choices: [{ delta: { content: errorText }, finish_reason: "stop", index: 0 }],
                     created,
                     id: streamId,
                     model: modelName,
@@ -311,11 +305,13 @@ class FormatConverter {
                     }
 
                     const openaiResponse = {
-                        choices: [{
-                            delta,
-                            finish_reason: null,
-                            index: 0,
-                        }],
+                        choices: [
+                            {
+                                delta,
+                                finish_reason: null,
+                                index: 0,
+                            },
+                        ],
                         created,
                         id: streamId,
                         model: modelName,
@@ -329,11 +325,13 @@ class FormatConverter {
         // Handle the final chunk with finish_reason and usage
         if (candidate.finishReason) {
             const finalResponse = {
-                choices: [{
-                    delta: {},
-                    finish_reason: candidate.finishReason,
-                    index: 0,
-                }],
+                choices: [
+                    {
+                        delta: {},
+                        finish_reason: candidate.finishReason,
+                        index: 0,
+                    },
+                ],
                 created,
                 id: streamId,
                 model: modelName,
@@ -361,11 +359,13 @@ class FormatConverter {
         if (!candidate) {
             this.logger.warn("[Adapter] No candidate found in Google response");
             return {
-                choices: [{
-                    finish_reason: "stop",
-                    index: 0,
-                    message: { content: "", role: "assistant" },
-                }],
+                choices: [
+                    {
+                        finish_reason: "stop",
+                        index: 0,
+                        message: { content: "", role: "assistant" },
+                    },
+                ],
                 created: Math.floor(Date.now() / 1000),
                 id: `chatcmpl-${this._generateRequestId()}`,
                 model: modelName,
@@ -400,11 +400,13 @@ class FormatConverter {
         }
 
         return {
-            choices: [{
-                finish_reason: candidate.finishReason || "stop",
-                index: 0,
-                message,
-            }],
+            choices: [
+                {
+                    finish_reason: candidate.finishReason || "stop",
+                    index: 0,
+                    message,
+                },
+            ],
             created: Math.floor(Date.now() / 1000),
             id: `chatcmpl-${this._generateRequestId()}`,
             model: modelName,
@@ -414,9 +416,7 @@ class FormatConverter {
     }
 
     _generateRequestId() {
-        return `${Date.now()}_${Math.random()
-            .toString(36)
-            .substring(2, 15)}`;
+        return `${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
     }
 
     _parseUsage(googleResponse) {

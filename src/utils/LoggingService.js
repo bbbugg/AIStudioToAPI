@@ -28,16 +28,20 @@ class LoggingService {
 
         try {
             // Format: YYYY-MM-DD HH:mm:ss.SSS [Timezone]
-            return now.toLocaleString("zh-CN", {
-                day: "2-digit",
-                hour: "2-digit",
-                hour12: false,
-                minute: "2-digit",
-                month: "2-digit",
-                second: "2-digit",
-                timeZone: timezone,
-                year: "numeric",
-            }).replace(/\//g, "-") + `.${now.getMilliseconds().toString().padStart(3, "0")} [${timezone}]`;
+            return (
+                now
+                    .toLocaleString("zh-CN", {
+                        day: "2-digit",
+                        hour: "2-digit",
+                        hour12: false,
+                        minute: "2-digit",
+                        month: "2-digit",
+                        second: "2-digit",
+                        timeZone: timezone,
+                        year: "numeric",
+                    })
+                    .replace(/\//g, "-") + `.${now.getMilliseconds().toString().padStart(3, "0")} [${timezone}]`
+            );
         } catch (err) {
             // Fallback to ISO format if timezone is invalid
             return now.toISOString();

@@ -22,9 +22,7 @@ class AuthSource {
         this.accountNameMap = new Map();
         this.lastScannedIndices = "[]"; // Cache to track changes
 
-        this.logger.info(
-            '[Auth] Using files in "configs/auth/" directory for authentication.'
-        );
+        this.logger.info('[Auth] Using files in "configs/auth/" directory for authentication.');
 
         this.reloadAuthSources(true); // Initial load
 
@@ -44,7 +42,9 @@ class AuthSource {
         if (isInitialLoad || oldIndices !== newIndices) {
             this.logger.info(`[Auth] Auth file scan detected changes. Reloading and re-validating...`);
             this._preValidateAndFilter();
-            this.logger.info(`[Auth] Reload complete. ${this.availableIndices.length} valid sources available: [${this.availableIndices.join(", ")}]`);
+            this.logger.info(
+                `[Auth] Reload complete. ${this.availableIndices.length} valid sources available: [${this.availableIndices.join(", ")}]`
+            );
             this.lastScannedIndices = newIndices;
         }
     }
@@ -82,9 +82,7 @@ class AuthSource {
         try {
             const files = fs.readdirSync(configDir);
             const authFiles = files.filter(file => /^auth-\d+\.json$/.test(file));
-            indices = authFiles.map(file =>
-                parseInt(file.match(/^auth-(\d+)\.json$/)[1], 10)
-            );
+            indices = authFiles.map(file => parseInt(file.match(/^auth-(\d+)\.json$/)[1], 10));
         } catch (error) {
             this.logger.error(`[Auth] Failed to scan "configs/auth/" directory: ${error.message}`);
             this.availableIndices = [];
@@ -106,16 +104,14 @@ class AuthSource {
         const invalidSourceDescriptions = [];
         this.accountNameMap.clear(); // Clear old names before re-validating
 
-        for (const index of this.initialIndices) { // Iterate over initial to check all, not just previously available
+        for (const index of this.initialIndices) {
+            // Iterate over initial to check all, not just previously available
             const authContent = this._getAuthContent(index);
             if (authContent) {
                 try {
                     const authData = JSON.parse(authContent);
                     validIndices.push(index);
-                    this.accountNameMap.set(
-                        index,
-                        authData.accountName || "N/A (unnamed)"
-                    );
+                    this.accountNameMap.set(index, authData.accountName || "N/A (unnamed)");
                 } catch (e) {
                     invalidSourceDescriptions.push(`auth-${index}`);
                 }
@@ -126,7 +122,8 @@ class AuthSource {
 
         if (invalidSourceDescriptions.length > 0) {
             this.logger.warn(
-                `⚠️ [Auth] Pre-validation found ${invalidSourceDescriptions.length
+                `⚠️ [Auth] Pre-validation found ${
+                    invalidSourceDescriptions.length
                 } authentication sources with format errors or unreadable: [${invalidSourceDescriptions.join(
                     ", "
                 )}], will be removed from available list.`
@@ -161,9 +158,7 @@ class AuthSource {
         try {
             return JSON.parse(jsonString);
         } catch (e) {
-            this.logger.error(
-                `[Auth] Failed to parse JSON content from authentication source #${index}: ${e.message}`
-            );
+            this.logger.error(`[Auth] Failed to parse JSON content from authentication source #${index}: ${e.message}`);
             return null;
         }
     }

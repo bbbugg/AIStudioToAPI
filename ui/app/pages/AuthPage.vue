@@ -17,13 +17,8 @@
                     </div>
                     <!-- eslint-disable-next-line vue/no-v-html -->
                     <div v-if="statusDetail" class="vnc-status-detail" v-html="statusDetail" />
-                    <button
-                        v-if="showReload"
-                        class="vnc-status-reload"
-                        type="button"
-                        @click="reloadPage"
-                    >
-                        {{ t('authReloadPage') }}
+                    <button v-if="showReload" class="vnc-status-reload" type="button" @click="reloadPage">
+                        {{ t("authReloadPage") }}
                     </button>
                 </div>
             </div>
@@ -33,7 +28,7 @@
             :offset="20"
             position="bottom"
             class="vnc-affix vnc-affix-bar"
-            style="position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 999;"
+            style="position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 999"
         >
             <div class="vnc-action-bar">
                 <button
@@ -173,23 +168,23 @@
         >
             <template #header>
                 <div class="vnc-dialog-title">
-                    {{ t('authSessionNoticeTitle') }}
+                    {{ t("authSessionNoticeTitle") }}
                 </div>
             </template>
             <div class="vnc-dialog-body">
                 <p class="vnc-dialog-text">
-                    {{ t('authSessionNoticeText') }}
+                    {{ t("authSessionNoticeText") }}
                 </p>
                 <el-checkbox v-model="skipIntro">
-                    {{ t('authDontShowAgain') }}
+                    {{ t("authDontShowAgain") }}
                 </el-checkbox>
             </div>
             <template #footer>
                 <el-button @click="handleIntroCancel">
-                    {{ t('cancel') }}
+                    {{ t("cancel") }}
                 </el-button>
                 <el-button type="primary" @click="handleIntroConfirm">
-                    {{ t('authIUnderstand') }}
+                    {{ t("authIUnderstand") }}
                 </el-button>
             </template>
         </el-dialog>
@@ -212,10 +207,10 @@
             />
             <template #footer>
                 <el-button @click="closeTextDialog">
-                    {{ t('cancel') }}
+                    {{ t("cancel") }}
                 </el-button>
                 <el-button type="primary" :disabled="!textInput" @click="sendText">
-                    {{ t('authSend') }}
+                    {{ t("authSend") }}
                 </el-button>
             </template>
         </el-dialog>
@@ -253,7 +248,7 @@ const cleanupSession = () => {
         fetch("/api/vnc/sessions", {
             keepalive: true,
             method: "DELETE",
-        }).catch(() => { });
+        }).catch(() => {});
     }
 };
 
@@ -277,13 +272,17 @@ const ensureConnected = () => {
 };
 
 const escapeHtml = value =>
-    String(value).replace(/[&<>"']/g, char => ({
-        "\"": "&quot;",
-        "&": "&amp;",
-        "'": "&#x27;",
-        "<": "&lt;",
-        ">": "&gt;",
-    }[char]));
+    String(value).replace(
+        /[&<>"']/g,
+        char =>
+            ({
+                '"': "&quot;",
+                "&": "&amp;",
+                "'": "&#x27;",
+                "<": "&lt;",
+                ">": "&gt;",
+            })[char]
+    );
 
 const goBack = () => {
     if (window.history.length > 1) {
@@ -392,7 +391,7 @@ const loadVncClient = async (vncContainer, vncSurface) => {
             const detail = e && e.detail ? e.detail : {};
             const reason = detail.clean
                 ? t("authSessionClosedNormally")
-                : (detail.reason || t("authSessionClosedUnexpected"));
+                : detail.reason || t("authSessionClosedUnexpected");
             setStatus({
                 detail: `${t("authSessionClosedReason")} ${escapeHtml(reason)}`,
                 reload: true,
@@ -473,15 +472,11 @@ const saveAuth = async (accountName = null) => {
         if (data.message === "errorVncEmailFetchFailed") {
             isSaving.value = false;
             try {
-                const result = await ElMessageBox.prompt(
-                    t("authEnterAccountName"),
-                    t("authAccountNameTitle"),
-                    {
-                        cancelButtonText: t("cancel"),
-                        confirmButtonText: t("authSaveSession"),
-                        inputValue: "",
-                    }
-                );
+                const result = await ElMessageBox.prompt(t("authEnterAccountName"), t("authAccountNameTitle"), {
+                    cancelButtonText: t("cancel"),
+                    confirmButtonText: t("authSaveSession"),
+                    inputValue: "",
+                });
                 if (result && result.value) {
                     await saveAuth(result.value);
                 } else {
@@ -498,9 +493,7 @@ const saveAuth = async (accountName = null) => {
         ElMessage.error(t("authSaveFailed").replace("{error}", data.error || "Unknown error."));
     } catch (error) {
         console.error("Error saving auth file:", error);
-        ElMessage.error(
-            t("authSaveError").replace("{error}", error.message || error)
-        );
+        ElMessage.error(t("authSaveError").replace("{error}", error.message || error));
     } finally {
         isSaving.value = false;
     }
@@ -510,8 +503,8 @@ const sendBackspace = () => {
     if (!ensureConnected()) {
         return;
     }
-    rfb.value.sendKey(0xFF08, "Backspace", true);
-    rfb.value.sendKey(0xFF08, "Backspace", false);
+    rfb.value.sendKey(0xff08, "Backspace", true);
+    rfb.value.sendKey(0xff08, "Backspace", false);
 };
 
 const sendText = () => {
@@ -570,7 +563,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style lang="less" scoped>
-@import '../styles/variables.less';
+@import "../styles/variables.less";
 
 #vnc-container {
     background: @vnc-surface-gradient;
@@ -672,7 +665,10 @@ onBeforeUnmount(() => {
     height: @vnc-button-size;
     justify-content: center;
     padding: 0;
-    transition: transform @transition-fast, background-color @transition-fast, box-shadow @transition-fast;
+    transition:
+        transform @transition-fast,
+        background-color @transition-fast,
+        box-shadow @transition-fast;
     width: @vnc-button-size;
 
     &:hover:not(:disabled) {
@@ -720,7 +716,10 @@ onBeforeUnmount(() => {
     height: @vnc-button-size;
     justify-content: center;
     padding: 0;
-    transition: background-color @transition-fast, color @transition-fast, transform @transition-fast;
+    transition:
+        background-color @transition-fast,
+        color @transition-fast,
+        transform @transition-fast;
     width: @vnc-button-size;
 
     &:hover:not(:disabled) {

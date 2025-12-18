@@ -41,17 +41,17 @@ curl -X POST http://localhost:7860/v1/chat/completions \
 ### 🖼️ Generate Image
 
 ```bash
-curl -X POST http://localhost:7860/v1/chat/completions \ 
-  -H "Content-Type: application/json" \ 
-  -H "Authorization: Bearer your-api-key-1" \ 
-  -d '{ 
-    "model": "gemini-2.5-flash-image", 
-    "messages": [ 
-      { 
-        "role": "user", 
-        "content": "Generate a kitten" 
-      } 
-    ], 
+curl -X POST http://localhost:7860/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "model": "gemini-2.5-flash-image",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Generate a kitten"
+      }
+    ],
     "stream": false
   }'
 ```
@@ -59,17 +59,17 @@ curl -X POST http://localhost:7860/v1/chat/completions \
 #### 🫗 Stream Generation
 
 ```bash
-curl -X POST http://localhost:7860/v1/chat/completions \ 
-  -H "Content-Type: application/json" \ 
-  -H "Authorization: Bearer your-api-key-1" \ 
-  -d '{ 
-    "model": "gemini-2.5-flash-image", 
-    "messages": [ 
-      { 
-        "role": "user", 
-        "content": "Generate a kitten" 
-      } 
-    ], 
+curl -X POST http://localhost:7860/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "model": "gemini-2.5-flash-image",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Generate a kitten"
+      }
+    ],
     "stream": true
   }'
 ```

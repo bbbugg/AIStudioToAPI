@@ -11,12 +11,10 @@ const Logger = {
     enabled: true,
     output(...messages) {
         if (!this.enabled) return;
-        const timestamp
-            = new Date().toLocaleTimeString("zh-CN", { hour12: false })
-            + "."
-            + new Date().getMilliseconds()
-                .toString()
-                .padStart(3, "0");
+        const timestamp =
+            new Date().toLocaleTimeString("zh-CN", { hour12: false }) +
+            "." +
+            new Date().getMilliseconds().toString().padStart(3, "0");
         console.log(`[ProxyClient] ${timestamp}`, ...messages);
         const logElement = document.createElement("div");
         logElement.textContent = `[${timestamp}] ${messages.join(" ")}`;
@@ -62,9 +60,7 @@ class ConnectionManager extends EventTarget {
                     if (!this.isConnected) reject(error);
                 });
                 this.socket.addEventListener("message", event => {
-                    this.dispatchEvent(
-                        new CustomEvent("message", { detail: event.data })
-                    );
+                    this.dispatchEvent(new CustomEvent("message", { detail: event.data }));
                 });
             } catch (e) {
                 Logger.output(
@@ -89,9 +85,7 @@ class ConnectionManager extends EventTarget {
         this.reconnectAttempts++;
         setTimeout(() => {
             Logger.output(`Attempting reconnection ${this.reconnectAttempts} attempt...`);
-            this.establish()
-                .catch(() => {
-                });
+            this.establish().catch(() => {});
         }, this.reconnectDelay);
     }
 }
@@ -110,15 +104,16 @@ class RequestProcessor {
 
         let timeoutId = null;
 
-        const startIdleTimeout = () => new Promise((_, reject) => {
-            timeoutId = setTimeout(() => {
-                const error = new Error(
-                    `Timeout: ${IDLE_TIMEOUT_DURATION / 1000} seconds without receiving any data`
-                );
-                abortController.abort();
-                reject(error);
-            }, IDLE_TIMEOUT_DURATION);
-        });
+        const startIdleTimeout = () =>
+            new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    const error = new Error(
+                        `Timeout: ${IDLE_TIMEOUT_DURATION / 1000} seconds without receiving any data`
+                    );
+                    abortController.abort();
+                    reject(error);
+                }, IDLE_TIMEOUT_DURATION);
+            });
 
         const cancelTimeout = () => {
             if (timeoutId) {
@@ -129,17 +124,10 @@ class RequestProcessor {
 
         const attemptPromise = (async () => {
             try {
-                Logger.output(
-                    `Executing request:`,
-                    requestSpec.method,
-                    requestSpec.path
-                );
+                Logger.output(`Executing request:`, requestSpec.method, requestSpec.path);
 
                 const requestUrl = this._constructUrl(requestSpec);
-                const requestConfig = this._buildRequestConfig(
-                    requestSpec,
-                    abortController.signal
-                );
+                const requestConfig = this._buildRequestConfig(requestSpec, abortController.signal);
 
                 const response = await fetch(requestUrl, requestConfig);
 
@@ -169,34 +157,27 @@ class RequestProcessor {
     }
 
     _constructUrl(requestSpec) {
-        let pathSegment = requestSpec.path.startsWith("/")
-            ? requestSpec.path.substring(1)
-            : requestSpec.path;
+        let pathSegment = requestSpec.path.startsWith("/") ? requestSpec.path.substring(1) : requestSpec.path;
         const queryParams = new URLSearchParams(requestSpec.query_params);
         if (requestSpec.streaming_mode === "fake") {
             Logger.output("Fake streaming mode activated, modifying request...");
             if (pathSegment.includes(":streamGenerateContent")) {
-                pathSegment = pathSegment.replace(
-                    ":streamGenerateContent",
-                    ":generateContent"
-                );
+                pathSegment = pathSegment.replace(":streamGenerateContent", ":generateContent");
                 Logger.output(`API path modified to: ${pathSegment}`);
             }
             if (queryParams.has("alt") && queryParams.get("alt") === "sse") {
                 queryParams.delete("alt");
-                Logger.output("Removed \"alt=sse\" query parameter.");
+                Logger.output('Removed "alt=sse" query parameter.');
             }
         }
         const queryString = queryParams.toString();
-        return `https://${this.targetDomain}/${pathSegment}${queryString ? "?" + queryString : ""
-        }`;
+        return `https://${this.targetDomain}/${pathSegment}${queryString ? "?" + queryString : ""}`;
     }
 
     _generateRandomString(length) {
         const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
         let result = "";
-        for (let i = 0; i < length; i++)
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
+        for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
         return result;
     }
 
@@ -207,17 +188,12 @@ class RequestProcessor {
             signal,
         };
 
-        if (
-            ["POST", "PUT", "PATCH"].includes(requestSpec.method)
-            && requestSpec.body
-        ) {
+        if (["POST", "PUT", "PATCH"].includes(requestSpec.method) && requestSpec.body) {
             try {
                 const bodyObj = JSON.parse(requestSpec.body);
 
                 // --- Module 1: Smart Filtering (Keep) ---
-                const isImageModel
-                    = requestSpec.path.includes("-image")
-                    || requestSpec.path.includes("imagen");
+                const isImageModel = requestSpec.path.includes("-image") || requestSpec.path.includes("imagen");
 
                 if (isImageModel) {
                     const incompatibleKeys = ["tool_config", "toolChoice", "tools"];
@@ -307,12 +283,8 @@ class ProxySystem extends EventTarget {
     }
 
     _setupEventHandlers() {
-        this.connectionManager.addEventListener("message", e =>
-            this._handleIncomingMessage(e.detail)
-        );
-        this.connectionManager.addEventListener("disconnected", () =>
-            this.requestProcessor.cancelAllOperations()
-        );
+        this.connectionManager.addEventListener("message", e => this._handleIncomingMessage(e.detail));
+        this.connectionManager.addEventListener("disconnected", () => this.requestProcessor.cancelAllOperations());
     }
 
     async _handleIncomingMessage(messageData) {
@@ -337,10 +309,7 @@ class ProxySystem extends EventTarget {
         } catch (error) {
             Logger.output("Message processing error:", error.message);
             // Only send error response when an error occurs during proxy request processing
-            if (
-                requestSpec.request_id
-                && requestSpec.event_type !== "cancel_request"
-            ) {
+            if (requestSpec.request_id && requestSpec.event_type !== "cancel_request") {
                 this._sendErrorResponse(error, requestSpec.request_id);
             }
         }
@@ -358,10 +327,7 @@ class ProxySystem extends EventTarget {
             if (this.requestProcessor.cancelledOperations.has(operationId)) {
                 throw new DOMException("The user aborted a request.", "AbortError");
             }
-            const { responsePromise, cancelTimeout: ct } = this.requestProcessor.execute(
-                requestSpec,
-                operationId
-            );
+            const { responsePromise, cancelTimeout: ct } = this.requestProcessor.execute(requestSpec, operationId);
             cancelTimeout = ct;
             const response = await responsePromise;
             if (this.requestProcessor.cancelledOperations.has(operationId)) {

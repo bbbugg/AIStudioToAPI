@@ -123,11 +123,7 @@
             "description": "Gemini 2.5 Flash Preview Image",
             "inputTokenLimit": 32768,
             "outputTokenLimit": 32768,
-            "supportedGenerationMethods": [
-                "generateContent",
-                "countTokens",
-                "batchGenerateContent"
-            ],
+            "supportedGenerationMethods": ["generateContent", "countTokens", "batchGenerateContent"],
             "temperature": 1.0,
             "topP": 0.95,
             "topK": 64,
@@ -141,11 +137,7 @@
             "description": "Gemini 2.5 Flash Preview Image",
             "inputTokenLimit": 32768,
             "outputTokenLimit": 32768,
-            "supportedGenerationMethods": [
-                "generateContent",
-                "countTokens",
-                "batchGenerateContent"
-            ],
+            "supportedGenerationMethods": ["generateContent", "countTokens", "batchGenerateContent"],
             "temperature": 1.0,
             "topP": 0.95,
             "topK": 64,
@@ -216,11 +208,7 @@
             "description": "Gemini 3 Pro Image Preview",
             "inputTokenLimit": 131072,
             "outputTokenLimit": 32768,
-            "supportedGenerationMethods": [
-                "generateContent",
-                "countTokens",
-                "batchGenerateContent"
-            ],
+            "supportedGenerationMethods": ["generateContent", "countTokens", "batchGenerateContent"],
             "temperature": 1.0,
             "topP": 0.95,
             "topK": 64,

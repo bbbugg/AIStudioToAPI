@@ -38,11 +38,7 @@ class ProxyServerSystem extends EventEmitter {
         this.forceUrlContext = this.config.forceUrlContext;
 
         this.authSource = new AuthSource(this.logger);
-        this.browserManager = new BrowserManager(
-            this.logger,
-            this.config,
-            this.authSource
-        );
+        this.browserManager = new BrowserManager(this.logger, this.config, this.authSource);
         this.connectionRegistry = new ConnectionRegistry(this.logger);
         this.requestHandler = new RequestHandler(
             this,
@@ -73,13 +69,8 @@ class ProxyServerSystem extends EventEmitter {
 
         let startupOrder = [...allAvailableIndices];
         if (initialAuthIndex && allAvailableIndices.includes(initialAuthIndex)) {
-            this.logger.info(
-                `[System] Detected specified startup index #${initialAuthIndex}, will try it first.`
-            );
-            startupOrder = [
-                initialAuthIndex,
-                ...allAvailableIndices.filter(i => i !== initialAuthIndex),
-            ];
+            this.logger.info(`[System] Detected specified startup index #${initialAuthIndex}, will try it first.`);
+            startupOrder = [initialAuthIndex, ...allAvailableIndices.filter(i => i !== initialAuthIndex)];
         } else {
             if (initialAuthIndex) {
                 this.logger.warn(
@@ -87,9 +78,7 @@ class ProxyServerSystem extends EventEmitter {
                 );
             }
             this.logger.info(
-                `[System] No valid startup index specified, will try in default order [${startupOrder.join(
-                    ", "
-                )}].`
+                `[System] No valid startup index specified, will try in default order [${startupOrder.join(", ")}].`
             );
         }
 
@@ -103,14 +92,14 @@ class ProxyServerSystem extends EventEmitter {
                 this.logger.info(`[System] ✅ Successfully started with account #${index}!`);
                 break;
             } catch (error) {
-                this.logger.error(
-                    `[System] ❌ Failed to start with account #${index}. Reason: ${error.message}`
-                );
+                this.logger.error(`[System] ❌ Failed to start with account #${index}. Reason: ${error.message}`);
             }
         }
 
         if (!isStarted) {
-            this.logger.warn("[System] All authentication sources failed to initialize. Starting in account binding mode without an active account.");
+            this.logger.warn(
+                "[System] All authentication sources failed to initialize. Starting in account binding mode without an active account."
+            );
             // Don't throw an error, just proceed to start servers
         }
 
@@ -124,9 +113,19 @@ class ProxyServerSystem extends EventEmitter {
         return (req, res, next) => {
             // Whitelist paths that don't require API key authentication
             // Note: /, /api/status use session authentication instead
-            const whitelistPaths = ["/", "/favicon.ico", "/login", "/health", "/api/status", "/api/accounts/current",
-                "/api/settings/streaming-mode", "/api/settings/force-thinking", "/api/settings/force-web-search",
-                "/api/settings/force-url-context", "/auth"];
+            const whitelistPaths = [
+                "/",
+                "/favicon.ico",
+                "/login",
+                "/health",
+                "/api/status",
+                "/api/accounts/current",
+                "/api/settings/streaming-mode",
+                "/api/settings/force-thinking",
+                "/api/settings/force-web-search",
+                "/api/settings/force-url-context",
+                "/auth",
+            ];
 
             // Whitelist path patterns (regex)
             const whitelistPatterns = [
@@ -134,13 +133,7 @@ class ProxyServerSystem extends EventEmitter {
             ];
 
             // Skip authentication for static files
-            const staticPrefixes = [
-                "/assests/",
-                "/assets/",
-                "/AIStudio_logo.svg",
-                "/AIStudio_icon.svg",
-                "/locales/",
-            ];
+            const staticPrefixes = ["/assests/", "/assets/", "/AIStudio_logo.svg", "/AIStudio_icon.svg", "/locales/"];
             const isStaticFile = staticPrefixes.some(prefix => req.path.startsWith(prefix) || req.path === prefix);
             const isWhitelistedPattern = whitelistPatterns.some(pattern => pattern.test(req.path));
 
@@ -156,10 +149,7 @@ class ProxyServerSystem extends EventEmitter {
             let clientKey = null;
             if (req.headers["x-goog-api-key"]) {
                 clientKey = req.headers["x-goog-api-key"];
-            } else if (
-                req.headers.authorization
-                && req.headers.authorization.startsWith("Bearer ")
-            ) {
+            } else if (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
                 clientKey = req.headers.authorization.substring(7);
             } else if (req.headers["x-api-key"]) {
                 clientKey = req.headers["x-api-key"];
@@ -169,8 +159,7 @@ class ProxyServerSystem extends EventEmitter {
 
             if (clientKey && serverApiKeys.includes(clientKey)) {
                 this.logger.info(
-                    `[Auth] API Key verification passed (from: ${req.headers["x-forwarded-for"] || req.ip
-                    })`
+                    `[Auth] API Key verification passed (from: ${req.headers["x-forwarded-for"] || req.ip})`
                 );
                 if (req.query.key) {
                     delete req.query.key;
@@ -185,13 +174,11 @@ class ProxyServerSystem extends EventEmitter {
                 );
             }
 
-            return res.status(401)
-                .json({
-                    error: {
-                        message:
-                            "Access denied. A valid API key was not found or is incorrect.",
-                    },
-                });
+            return res.status(401).json({
+                error: {
+                    message: "Access denied. A valid API key was not found or is incorrect.",
+                },
+            });
         };
     }
 
@@ -245,7 +232,9 @@ class ProxyServerSystem extends EventEmitter {
                 });
             } else {
                 // If it's not for VNC, destroy the socket to prevent hanging connections
-                this.logger.warn(`[System] Received an upgrade request for an unknown path: ${pathname}. Connection terminated.`);
+                this.logger.warn(
+                    `[System] Received an upgrade request for an unknown path: ${pathname}. Connection terminated.`
+                );
                 socket.destroy();
             }
         });
@@ -260,8 +249,7 @@ class ProxyServerSystem extends EventEmitter {
                     `[System] HTTP server is listening on http://${this.config.host}:${this.config.httpPort}`
                 );
                 this.logger.info(
-                    `[System] Keep-Alive timeout set to ${this.httpServer.keepAliveTimeout / 1000
-                    } seconds.`
+                    `[System] Keep-Alive timeout set to ${this.httpServer.keepAliveTimeout / 1000} seconds.`
                 );
                 resolve();
             });
@@ -274,16 +262,13 @@ class ProxyServerSystem extends EventEmitter {
         // CORS middleware
         app.use((req, res, next) => {
             res.header("Access-Control-Allow-Origin", "*");
-            res.header(
-                "Access-Control-Allow-Methods",
-                "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-            );
+            res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
             res.header(
                 "Access-Control-Allow-Headers",
-                "Content-Type, Authorization, x-requested-with, x-api-key, x-goog-api-key, x-goog-api-client, x-user-agent,"
-                + " origin, accept, baggage, sentry-trace, openai-organization, openai-project, openai-beta, x-stainless-lang, "
-                + "x-stainless-package-version, x-stainless-os, x-stainless-arch, x-stainless-runtime, x-stainless-runtime-version, "
-                + "x-stainless-retry-count, x-stainless-timeout, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform"
+                "Content-Type, Authorization, x-requested-with, x-api-key, x-goog-api-key, x-goog-api-client, x-user-agent," +
+                    " origin, accept, baggage, sentry-trace, openai-organization, openai-project, openai-beta, x-stainless-lang, " +
+                    "x-stainless-package-version, x-stainless-os, x-stainless-arch, x-stainless-runtime, x-stainless-runtime-version, " +
+                    "x-stainless-retry-count, x-stainless-timeout, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform"
             );
             if (req.method === "OPTIONS") {
                 return res.sendStatus(204);
@@ -294,15 +279,13 @@ class ProxyServerSystem extends EventEmitter {
         // Request logging
         app.use((req, res, next) => {
             if (
-                req.path !== "/api/status"
-                && req.path !== "/"
-                && req.path !== "/favicon.ico"
-                && req.path !== "/login"
-                && req.path !== "/health"
+                req.path !== "/api/status" &&
+                req.path !== "/" &&
+                req.path !== "/favicon.ico" &&
+                req.path !== "/login" &&
+                req.path !== "/health"
             ) {
-                this.logger.info(
-                    `[Entrypoint] Received a request: ${req.method} ${req.path}`
-                );
+                this.logger.info(`[Entrypoint] Received a request: ${req.method} ${req.path}`);
             }
             next();
         });
@@ -338,16 +321,14 @@ class ProxyServerSystem extends EventEmitter {
                 owned_by: "google",
             }));
 
-            res.status(200)
-                .json({
-                    data: models,
-                    object: "list",
-                });
+            res.status(200).json({
+                data: models,
+                object: "list",
+            });
         });
 
         app.get(["/v1beta/models"], (req, res) => {
-            res.status(200)
-                .json({ models: this.config.modelList });
+            res.status(200).json({ models: this.config.modelList });
         });
 
         app.post("/v1/chat/completions", (req, res) => {

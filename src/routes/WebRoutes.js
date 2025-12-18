@@ -37,8 +37,7 @@ class WebRoutes {
      */
     setupSession(app) {
         // Generate a secure random session secret
-        const sessionSecret = crypto.randomBytes(32)
-            .toString("hex");
+        const sessionSecret = crypto.randomBytes(32).toString("hex");
 
         // Trust first proxy (Nginx) for secure cookies and IP forwarding
         app.set("trust proxy", 1);
@@ -47,7 +46,6 @@ class WebRoutes {
         app.use(
             session({
                 cookie: {
-
                     httpOnly: true,
 
                     maxAge: 86400000,

@@ -49,43 +49,30 @@ class ConfigLoader {
         }
 
         // Environment variable overrides
-        if (process.env.PORT)
-            config.httpPort = parseInt(process.env.PORT, 10) || config.httpPort;
+        if (process.env.PORT) config.httpPort = parseInt(process.env.PORT, 10) || config.httpPort;
         if (process.env.HOST) config.host = process.env.HOST;
-        if (process.env.STREAMING_MODE)
-            config.streamingMode = process.env.STREAMING_MODE;
+        if (process.env.STREAMING_MODE) config.streamingMode = process.env.STREAMING_MODE;
         if (process.env.FAILURE_THRESHOLD)
-            config.failureThreshold
-                = Math.max(0, parseInt(process.env.FAILURE_THRESHOLD, 10)) ?? config.failureThreshold;
+            config.failureThreshold =
+                Math.max(0, parseInt(process.env.FAILURE_THRESHOLD, 10)) ?? config.failureThreshold;
         if (process.env.SWITCH_ON_USES)
-            config.switchOnUses
-                = Math.max(0, parseInt(process.env.SWITCH_ON_USES, 10)) ?? config.switchOnUses;
+            config.switchOnUses = Math.max(0, parseInt(process.env.SWITCH_ON_USES, 10)) ?? config.switchOnUses;
         if (process.env.MAX_RETRIES)
-            config.maxRetries
-                = Math.max(1, parseInt(process.env.MAX_RETRIES, 10)) || config.maxRetries;
+            config.maxRetries = Math.max(1, parseInt(process.env.MAX_RETRIES, 10)) || config.maxRetries;
         if (process.env.RETRY_DELAY)
-            config.retryDelay
-                = Math.max(50, parseInt(process.env.RETRY_DELAY, 10)) || config.retryDelay;
-        if (process.env.CAMOUFOX_EXECUTABLE_PATH)
-            config.browserExecutablePath = process.env.CAMOUFOX_EXECUTABLE_PATH;
+            config.retryDelay = Math.max(50, parseInt(process.env.RETRY_DELAY, 10)) || config.retryDelay;
+        if (process.env.CAMOUFOX_EXECUTABLE_PATH) config.browserExecutablePath = process.env.CAMOUFOX_EXECUTABLE_PATH;
         if (process.env.API_KEYS) {
             config.apiKeys = process.env.API_KEYS.split(",");
         }
-        if (process.env.FORCE_THINKING)
-            config.forceThinking = process.env.FORCE_THINKING === "true";
-        if (process.env.FORCE_WEB_SEARCH)
-            config.forceWebSearch = process.env.FORCE_WEB_SEARCH === "true";
-        if (process.env.FORCE_URL_CONTEXT)
-            config.forceUrlContext = process.env.FORCE_URL_CONTEXT === "true";
+        if (process.env.FORCE_THINKING) config.forceThinking = process.env.FORCE_THINKING === "true";
+        if (process.env.FORCE_WEB_SEARCH) config.forceWebSearch = process.env.FORCE_WEB_SEARCH === "true";
+        if (process.env.FORCE_URL_CONTEXT) config.forceUrlContext = process.env.FORCE_URL_CONTEXT === "true";
 
         let rawCodes = process.env.IMMEDIATE_SWITCH_STATUS_CODES;
         let codesSource = "environment variable";
 
-        if (
-            !rawCodes
-            && config.immediateSwitchStatusCodes
-            && Array.isArray(config.immediateSwitchStatusCodes)
-        ) {
+        if (!rawCodes && config.immediateSwitchStatusCodes && Array.isArray(config.immediateSwitchStatusCodes)) {
             rawCodes = config.immediateSwitchStatusCodes.join(",");
             codesSource = "config.json file or default value";
         }
@@ -103,9 +90,7 @@ class ConfigLoader {
         }
 
         if (Array.isArray(config.apiKeys)) {
-            config.apiKeys = config.apiKeys
-                .map(k => String(k).trim())
-                .filter(k => k);
+            config.apiKeys = config.apiKeys.map(k => String(k).trim()).filter(k => k);
         } else {
             config.apiKeys = [];
         }
@@ -130,15 +115,11 @@ class ConfigLoader {
                         `[System] Successfully loaded ${config.modelList.length} models from models.json.`
                     );
                 } else {
-                    this.logger.warn(
-                        `[System] models.json is not in the expected format, using default model list.`
-                    );
+                    this.logger.warn(`[System] models.json is not in the expected format, using default model list.`);
                     config.modelList = [{ name: "models/gemini-2.5-flash-lite" }];
                 }
             } else {
-                this.logger.warn(
-                    `[System] models.json file not found, using default model list.`
-                );
+                this.logger.warn(`[System] models.json file not found, using default model list.`);
                 config.modelList = [{ name: "models/gemini-2.5-flash-lite" }];
             }
         } catch (error) {
@@ -158,29 +139,24 @@ class ConfigLoader {
         this.logger.info(`  Listening Address: ${config.host}`);
         this.logger.info(`  Streaming Mode: ${config.streamingMode}`);
         this.logger.info(
-            `  Usage-based Switch Threshold: ${config.switchOnUses > 0
-                ? `Switch after every ${config.switchOnUses} requests`
-                : "Disabled"
+            `  Usage-based Switch Threshold: ${
+                config.switchOnUses > 0 ? `Switch after every ${config.switchOnUses} requests` : "Disabled"
             }`
         );
         this.logger.info(
-            `  Failure-based Switch: ${config.failureThreshold > 0
-                ? `Switch after ${config.failureThreshold} failures`
-                : "Disabled"
+            `  Failure-based Switch: ${
+                config.failureThreshold > 0 ? `Switch after ${config.failureThreshold} failures` : "Disabled"
             }`
         );
         this.logger.info(
-            `  Immediate Switch Status Codes: ${config.immediateSwitchStatusCodes.length > 0
-                ? config.immediateSwitchStatusCodes.join(", ")
-                : "Disabled"
+            `  Immediate Switch Status Codes: ${
+                config.immediateSwitchStatusCodes.length > 0 ? config.immediateSwitchStatusCodes.join(", ") : "Disabled"
             }`
         );
         this.logger.info(`  Max Retries per Request: ${config.maxRetries} times`);
         this.logger.info(`  Retry Delay: ${config.retryDelay}ms`);
         this.logger.info(`  API Key Source: ${config.apiKeySource}`);
-        this.logger.info(
-            "============================================================="
-        );
+        this.logger.info("=============================================================");
     }
 }
 
