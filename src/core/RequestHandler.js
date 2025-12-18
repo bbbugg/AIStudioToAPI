@@ -80,23 +80,30 @@ class RequestHandler {
         this.authSwitcher.isSystemBusy = true;
         const recoveryAuthIndex = this.currentAuthIndex || 0;
         let wasRecoveryAttempt = false;
+        let recoverySuccess = false;
 
         try {
             if (recoveryAuthIndex > 0) {
                 wasRecoveryAttempt = true;
                 await this.browserManager.launchOrSwitchContext(recoveryAuthIndex);
                 this.logger.info(`✅ [System] Browser successfully recovered to account #${recoveryAuthIndex}!`);
+                recoverySuccess = true;
             } else if (this.authSource.availableIndices.length > 0) {
                 this.logger.warn("⚠️ [System] No current account, attempting to switch to first available account...");
                 const result = await this.authSwitcher.switchToNextAuth();
-                this.logger.info(`✅ [System] Successfully recovered to account #${result.newIndex}!`);
+                if (!result.success) {
+                    this.logger.error(`❌ [System] Failed to switch to available account: ${result.reason}`);
+                    await this._sendErrorResponse(res, 503, `Service temporarily unavailable: ${result.reason}`);
+                    recoverySuccess = false;
+                } else {
+                    this.logger.info(`✅ [System] Successfully recovered to account #${result.newIndex}!`);
+                    recoverySuccess = true;
+                }
             } else {
                 this.logger.error("❌ [System] No available accounts for recovery.");
-                this.currentAuthIndex = 0;
                 await this._sendErrorResponse(res, 503, "Service temporarily unavailable: No available accounts.");
-                return false;
+                recoverySuccess = false;
             }
-            return true;
         } catch (error) {
             this.logger.error(`❌ [System] Recovery failed: ${error.message}`);
 
@@ -104,12 +111,20 @@ class RequestHandler {
                 this.logger.warn("⚠️ [System] Attempting to switch to alternative account...");
                 try {
                     const result = await this.authSwitcher.switchToNextAuth();
-                    this.logger.info(`✅ [System] Successfully switched to alternative account #${result.newIndex}!`);
-                    return true;
+                    if (!result.success) {
+                        this.logger.error(`❌ [System] Failed to switch to alternative account: ${result.reason}`);
+                        await this._sendErrorResponse(res, 503, `Service temporarily unavailable: ${result.reason}`);
+                        recoverySuccess = false;
+                    } else {
+                        this.logger.info(
+                            `✅ [System] Successfully switched to alternative account #${result.newIndex}!`
+                        );
+                        recoverySuccess = true;
+                    }
                 } catch (switchError) {
                     this.logger.error(`❌ [System] All accounts failed: ${switchError.message}`);
                     await this._sendErrorResponse(res, 503, "Service temporarily unavailable: All accounts failed.");
-                    return false;
+                    recoverySuccess = false;
                 }
             } else {
                 await this._sendErrorResponse(
@@ -117,11 +132,13 @@ class RequestHandler {
                     503,
                     "Service temporarily unavailable: Browser crashed and cannot auto-recover."
                 );
-                return false;
+                recoverySuccess = false;
             }
         } finally {
             this.authSwitcher.isSystemBusy = false;
         }
+
+        return recoverySuccess;
     }
 
     // Process standard Google API requests

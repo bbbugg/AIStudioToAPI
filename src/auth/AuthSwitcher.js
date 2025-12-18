@@ -73,8 +73,7 @@ class AuthSwitcher {
 
                 try {
                     await this.browserManager.launchOrSwitchContext(singleIndex);
-                    this.failureCount = 0;
-                    this.usageCount = 0;
+                    this.resetCounters();
 
                     this.logger.info(
                         `✅ [Auth] Single account #${singleIndex} restart/refresh successful, usage count reset.`
@@ -109,8 +108,7 @@ class AuthSwitcher {
 
                 try {
                     await this.browserManager.switchAccount(accountIndex);
-                    this.failureCount = 0;
-                    this.usageCount = 0;
+                    this.resetCounters();
 
                     if (failedAccounts.length > 0) {
                         this.logger.info(
@@ -137,8 +135,7 @@ class AuthSwitcher {
 
             try {
                 await this.browserManager.switchAccount(originalStartAccount);
-                this.failureCount = 0;
-                this.usageCount = 0;
+                this.resetCounters();
                 this.logger.info(`✅ [Auth] Final attempt succeeded! Switched to account #${originalStartAccount}.`);
                 return {
                     failedAccounts,
@@ -180,8 +177,7 @@ class AuthSwitcher {
         try {
             this.logger.info(`🔄 [Auth] Starting switch to specified account #${targetIndex}...`);
             await this.browserManager.switchAccount(targetIndex);
-            this.failureCount = 0;
-            this.usageCount = 0;
+            this.resetCounters();
             this.logger.info(`✅ [Auth] Successfully switched to account #${targetIndex}, counters reset.`);
             return { newIndex: targetIndex, success: true };
         } catch (error) {
@@ -220,7 +216,14 @@ class AuthSwitcher {
             }
 
             try {
-                await this.switchToNextAuth();
+                const result = await this.switchToNextAuth();
+                if (!result.success) {
+                    this.logger.warn(`⚠️ [Auth] Account switch skipped: ${result.reason}`);
+                    if (sendErrorCallback) {
+                        sendErrorCallback(`⚠️ Account switch skipped: ${result.reason}`);
+                    }
+                    return;
+                }
                 const successMessage = `🔄 Target account invalid, automatically fell back to account #${this.currentAuthIndex}.`;
                 this.logger.info(`[Auth] ${successMessage}`);
                 if (sendErrorCallback) sendErrorCallback(successMessage);
