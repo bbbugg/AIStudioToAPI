@@ -118,7 +118,7 @@ class RequestProcessor {
         const cancelTimeout = () => {
             if (timeoutId) {
                 clearTimeout(timeoutId);
-                Logger.output("Data chunk received, timeout restriction lifted.");
+                // Logger.output("Data chunk received, timeout restriction lifted.");
             }
         };
 
