@@ -2,7 +2,7 @@
  * File: src/core/BrowserManager.js
  * Description: Browser manager for launching and controlling headless Firefox instances with authentication contexts
  *
- * Maintainers: iBenzene, bbbugg
+ * Maintainers: iBenzene, bbbugg, 挈挈
  * Original Author: Ellinav
  */
 
