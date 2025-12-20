@@ -124,7 +124,7 @@ After deployment, you need to add Google accounts using one of these methods:
 
 - Access the deployed service address in your browser (e.g., `http://your-server:7860`) and click the "Add User" button
 - You'll be redirected to a VNC page with a browser instance
-- Log in to your Google account
+- Log in to your Google account, then click the "Save" button after login is complete
 - The account will be automatically saved as `auth-N.json` (N starts from 0)
 
 **Method 2: Upload Auth Files (Legacy)**
