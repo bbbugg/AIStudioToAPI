@@ -111,7 +111,7 @@ class AuthSource {
                 try {
                     const authData = JSON.parse(authContent);
                     validIndices.push(index);
-                    this.accountNameMap.set(index, authData.accountName || "N/A (unnamed)");
+                    this.accountNameMap.set(index, authData.accountName || null);
                 } catch (e) {
                     invalidSourceDescriptions.push(`auth-${index}`);
                 }

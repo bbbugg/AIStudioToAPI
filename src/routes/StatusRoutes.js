@@ -331,8 +331,8 @@ class StatusRoutes {
         const accountNameMap = authSource.accountNameMap;
         const accountDetails = initialIndices.map(index => {
             const isInvalid = invalidIndices.includes(index);
-            const name = isInvalid ? "N/A (JSON format error)" : accountNameMap.get(index) || "N/A (Unnamed)";
-            return { index, name };
+            const name = isInvalid ? null : accountNameMap.get(index) || null;
+            return { index, isInvalid, name };
         });
 
         const currentAuthIndex = requestHandler.currentAuthIndex;

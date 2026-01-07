@@ -112,7 +112,7 @@
 <span class="label">{{ t('usageCount') }}</span>: <span>{{ state.usageCount }}</span>
 <span class="label">{{ t('consecutiveFailures') }}</span>: <span>{{ state.failureCount }}</span>
 <span class="label">{{ t('totalScanned') }}</span>: <span>{{ totalScannedAccountsText }}</span><template v-for="account in state.accountDetails" :key="account.index">
-<span class="label account-label" style="padding-left: 20px;">{{ t('account') }} {{ account.index }}</span>: {{ account.name }}</template>
+<span class="label account-label" style="padding-left: 20px;">{{ t('account') }} {{ account.index }}</span>: {{ getAccountDisplayName(account) }}</template>
 <span class="label">{{ t('formatErrors') }}</span>: <span>{{ formatErrorsText }}</span></template></pre>
             </div>
             <div id="actions-section" style="margin-top: 2em">
@@ -127,7 +127,7 @@
                         <el-option
                             v-for="item in state.accountDetails"
                             :key="item.index"
-                            :label="`${t('account')} #${item.index} (${item.name})`"
+                            :label="`${t('account')} #${item.index} (${getAccountDisplayName(item)})`"
                             :value="item.index"
                         />
                     </el-select>
@@ -405,7 +405,7 @@ const currentAccountName = computed(() => {
         return t("noActiveAccount");
     }
     const account = state.accountDetails.find(acc => acc.index === state.currentAuthIndex);
-    return account ? account.name : t("noActiveAccount");
+    return account ? getAccountDisplayName(account) : t("noActiveAccount");
 });
 
 const currentAccountNameClass = computed(() => {
@@ -457,6 +457,14 @@ const appVersion = computed(() => {
     // Keep raw string for others (e.g. main, dev)
     return version;
 });
+
+// Get display name for account with i18n support
+const getAccountDisplayName = account => {
+    if (account.isInvalid) {
+        return t("jsonFormatError");
+    }
+    return account.name || t("unnamedAccount");
+};
 
 const addUser = () => {
     router.push("/auth");
