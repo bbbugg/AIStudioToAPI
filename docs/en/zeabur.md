@@ -82,3 +82,11 @@ After deployment, you can access the API using the public domain combined with t
 
 1. Go to the service status page.
 2. Click the **Restart Current Version** button.
+
+## 🔄 Version Update
+
+To update to the latest version:
+
+1. Go to the service details page.
+2. Click the **Service** tab.
+3. Click the **Restart Current Version** button.
