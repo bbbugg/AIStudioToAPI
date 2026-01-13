@@ -226,3 +226,13 @@ sudo docker compose down
 
 - 原始作品 Copyright © [Ellinav](https://github.com/Ellinav)
 - 修改与新增部分 Copyright © 2024 [iBenzene](https://github.com/iBenzene)、[bbbugg](https://github.com/bbbugg)、[挈挈](https://github.com/ljh156705)及其他贡献者
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ibenzene/aistudiotoapi&type=date&legend=top-left)](https://www.star-history.com/#ibenzene/aistudiotoapi&type=date&legend=top-left)
+
+<a href="https://github.com/iBenzene/AIStudioToAPI/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=iBenzene/AIStudioToAPI" />
+</a>
+
+Made with [contrib.rocks](https://contrib.rocks).
