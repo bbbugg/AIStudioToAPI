@@ -6,7 +6,7 @@
 
 > **👏 鸣谢**：本项目为基于 [Ellinav](https://github.com/Ellinav) 的 [ais2api](https://github.com/Ellinav/ais2api) 分支进行的二次开发，我们对原作者创立这个优秀的项目表示诚挚的感谢。
 
-## ✨ 功能特性
+## ✨ 功能特
 
 - 🔄 **API 兼容性**：同时兼容 OpenAI API 和 Gemini API 格式
 - 🌐 **网页自动化**：使用浏览器自动化技术与 AI Studio 网页界面交互
