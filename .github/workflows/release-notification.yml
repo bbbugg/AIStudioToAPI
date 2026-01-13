@@ -1,0 +1,144 @@
+name: Release Notification
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  notify-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Comment on PRs and Linked Issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { owner, repo } = context.repo;
+            const releaseUrl = `https://github.com/${owner}/${repo}/releases/tag/${tag}`;
+            
+            console.log(`🚀 Start processing version: ${tag}`);
+
+            // 1. Find the previous Tag
+            let prevTag = null;
+            try {
+              // Sort by version number descending
+              const { stdout } = await exec.getExecOutput('git', ['tag', '--list', 'v*', '--sort=-v:refname']);
+              const tags = stdout.trim().split('\n').filter(Boolean);
+              
+              const currentIndex = tags.indexOf(tag);
+              if (currentIndex !== -1 && currentIndex < tags.length - 1) {
+                prevTag = tags[currentIndex + 1];
+              }
+            } catch (error) {
+              console.log('⚠️ Failed to get Tag list');
+            }
+
+            // If no previous Tag found, exit
+            if (!prevTag) {
+              console.log('🛑 Previous version Tag not found, skipping comment process.');
+              return;
+            }
+
+            const range = `${prevTag}..${tag}`;
+            console.log(`📍 Analyzing commit range: ${range}`);
+
+            // 2. Get Commits within range
+            let commitShas = [];
+            try {
+              const { stdout } = await exec.getExecOutput('git', ['log', '--format=%H', range]);
+              commitShas = stdout.trim().split('\n').filter(Boolean);
+            } catch (error) {
+              console.log('❌ Failed to get commits');
+              return;
+            }
+
+            if (commitShas.length === 0) return;
+            console.log(`🔍 Found ${commitShas.length} commits`);
+
+            // 3. Find associated PRs
+            const prNumbers = new Set();
+            for (const sha of commitShas) {
+              try {
+                const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                  owner,
+                  repo,
+                  commit_sha: sha,
+                });
+                pulls.forEach(p => prNumbers.add(p.number));
+              } catch (e) { }
+            }
+            
+            console.log(`📋 Involves PRs: ${Array.from(prNumbers).join(', ')}`);
+
+            // 4. Comment on PRs and parse associated Issues
+            // Regex explanation:
+            // - /.../gi: g=global, i=case insensitive
+            // - (?:...): non-capturing group for keywords
+            // - :?: match optional colon, e.g. "Fixes: #123"
+            const issueRegex = /(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved):?\s+(?:#(\d+)|https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/(\d+))/gi;
+
+            for (const prNumber of prNumbers) {
+              // A. Comment on PR
+              const prCommentBody = `🎉 此 PR 的修改已在版本 [${tag}](${releaseUrl}) 中发布。\n🎉 The changes in this PR have been released in version [${tag}](${releaseUrl}).`;
+              try {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  body: prCommentBody
+                });
+                console.log(`✅ Commented on PR #${prNumber}`);
+              } catch (e) {
+                console.log(`❌ Failed to comment on PR #${prNumber}: ${e.message}`);
+              }
+
+              // B. Find and comment on associated Issue
+              try {
+                const { data: pr } = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                });
+
+                if (pr.body) {
+                  const issuesToNotify = new Set();
+                  let match;
+                  // Reset regex index (good practice)
+                  issueRegex.lastIndex = 0;
+                  
+                  while ((match = issueRegex.exec(pr.body)) !== null) {
+                    // match[1] is number from #123, match[2] is number from link
+                    issuesToNotify.add(match[1] || match[2]);
+                  }
+
+                  const issueCommentBody = `✅ 此 Issue 已在版本 [${tag}](${releaseUrl}) 中修复 (通过 PR #${prNumber})。\n✅ This Issue has been fixed in version [${tag}](${releaseUrl}) (via PR #${prNumber}).`;
+                  
+                  for (const issueId of issuesToNotify) {
+                    try {
+                      await github.rest.issues.createComment({
+                        owner,
+                        repo,
+                        issue_number: parseInt(issueId, 10),
+                        body: issueCommentBody
+                      });
+                      console.log(`✅ Commented on associated Issue #${issueId}`);
+                    } catch (e) {
+                       console.log(`❌ Failed to comment on Issue #${issueId}: ${e.message}`);
+                    }
+                  }
+                }
+              } catch (e) {
+                console.log(`⚠️ Error processing PR #${prNumber} associated Issues`);
+              }
+            }
