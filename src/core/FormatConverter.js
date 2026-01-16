@@ -17,6 +17,58 @@ class FormatConverter {
     // Placeholder signature for Gemini 3 functionCall validation
     static DUMMY_THOUGHT_SIGNATURE = "context_engineering_is_the_way_to_go";
 
+    // ThinkingLevel suffix mapping (lowercase -> uppercase API value)
+    static THINKING_LEVEL_MAP = {
+        high: "HIGH",
+        low: "LOW",
+        medium: "MEDIUM",
+        minimal: "MINIMAL",
+    };
+
+    /**
+     * Parse thinkingLevel suffix from model name
+     * Supports two formats:
+     *   - Parenthesis format: gemini-3-flash-preview(minimal), gemini-3-pro-preview(high)
+     *   - Hyphen format: gemini-3-flash-preview-minimal, gemini-3-pro-preview-high
+     *
+     * @param {string} modelName - Original model name
+     * @returns {{ cleanModelName: string, thinkingLevel: string|null }}
+     *          - cleanModelName: Model name with suffix removed
+     *          - thinkingLevel: Uppercase thinkingLevel value, or null if no suffix
+     */
+    static parseModelThinkingLevel(modelName) {
+        if (!modelName || typeof modelName !== "string") {
+            return { cleanModelName: modelName, thinkingLevel: null };
+        }
+
+        const levels = Object.keys(FormatConverter.THINKING_LEVEL_MAP);
+
+        // Check parenthesis format: model(level)
+        const parenMatch = modelName.match(new RegExp(`^(.+)\\((${levels.join("|")})\\)$`, "i"));
+        if (parenMatch) {
+            const baseModel = parenMatch[1];
+            const levelKey = parenMatch[2].toLowerCase();
+            return {
+                cleanModelName: baseModel,
+                thinkingLevel: FormatConverter.THINKING_LEVEL_MAP[levelKey],
+            };
+        }
+
+        // Check hyphen format: model-level
+        const hyphenMatch = modelName.match(new RegExp(`^(.+)-(${levels.join("|")})$`, "i"));
+        if (hyphenMatch) {
+            const baseModel = hyphenMatch[1];
+            const levelKey = hyphenMatch[2].toLowerCase();
+            return {
+                cleanModelName: baseModel,
+                thinkingLevel: FormatConverter.THINKING_LEVEL_MAP[levelKey],
+            };
+        }
+
+        // No matching suffix
+        return { cleanModelName: modelName, thinkingLevel: null };
+    }
+
     constructor(logger, serverSystem) {
         this.logger = logger;
         this.serverSystem = serverSystem;
@@ -120,10 +172,23 @@ class FormatConverter {
 
     /**
      * Convert OpenAI request format to Google Gemini format
+     * @param {object} openaiBody - OpenAI format request body
+     * @returns {{ googleRequest: object, cleanModelName: string }} - Converted request and cleaned model name
      */
     async translateOpenAIToGoogle(openaiBody) {
         // eslint-disable-line no-unused-vars
         this.logger.info("[Adapter] Starting translation of OpenAI request format to Google format...");
+
+        // Parse thinkingLevel suffix from model name (e.g., gemini-3-flash-preview-minimal or gemini-3-flash-preview(low))
+        const rawModel = openaiBody.model || "gemini-2.5-flash-lite";
+        const { cleanModelName, thinkingLevel: modelThinkingLevel } = FormatConverter.parseModelThinkingLevel(rawModel);
+
+        if (modelThinkingLevel) {
+            this.logger.info(
+                `[Adapter] Detected thinkingLevel suffix in model name: "${rawModel}" -> model="${cleanModelName}", thinkingLevel="${modelThinkingLevel}"`
+            );
+        }
+
         // [DEBUG] Log incoming messages for troubleshooting
         this.logger.debug(`[Adapter] Debug: incoming messages = ${JSON.stringify(openaiBody.messages, null, 2)}`);
         // [DEBUG] Log original OpenAI tools
@@ -416,6 +481,17 @@ class FormatConverter {
             thinkingConfig = { includeThoughts: true };
         }
 
+        // If model name suffix specifies thinkingLevel, override directly (highest priority)
+        if (modelThinkingLevel) {
+            if (!thinkingConfig) {
+                thinkingConfig = {};
+            }
+            thinkingConfig.thinkingLevel = modelThinkingLevel;
+            this.logger.info(
+                `[Adapter] Applied thinkingLevel from model name suffix: ${modelThinkingLevel} (overriding any existing value)`
+            );
+        }
+
         if (thinkingConfig) {
             generationConfig.thinkingConfig = thinkingConfig;
         }
@@ -590,7 +666,7 @@ class FormatConverter {
         }
 
         this.logger.info("[Adapter] Translation complete.");
-        return googleRequest;
+        return { cleanModelName, googleRequest };
     }
 
     /**

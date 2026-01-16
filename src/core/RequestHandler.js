@@ -379,7 +379,6 @@ class RequestHandler {
             this.browserManager.notifyUserActivity();
         }
         const isOpenAIStream = req.body.stream === true;
-        const model = req.body.model || "gemini-2.5-flash-lite";
         const systemStreamMode = this.serverSystem.streamingMode;
         const useRealStream = isOpenAIStream && systemStreamMode === "real";
 
@@ -396,10 +395,12 @@ class RequestHandler {
             }
         }
 
-        // Translate OpenAI format to Google format
-        let googleBody;
+        // Translate OpenAI format to Google format (also handles model name suffix parsing)
+        let googleBody, model;
         try {
-            googleBody = await this.formatConverter.translateOpenAIToGoogle(req.body);
+            const result = await this.formatConverter.translateOpenAIToGoogle(req.body);
+            googleBody = result.googleRequest;
+            model = result.cleanModelName;
         } catch (error) {
             this.logger.error(`[Adapter] OpenAI request translation failed: ${error.message}`);
             return this._sendErrorResponse(res, 400, "Invalid OpenAI request format.");
@@ -1026,10 +1027,34 @@ class RequestHandler {
 
     _buildProxyRequest(req, requestId) {
         const fullPath = req.path;
-        const cleanPath = fullPath.replace(/^\/proxy/, "");
+        let cleanPath = fullPath.replace(/^\/proxy/, "");
         const bodyObj = req.body;
 
-        // Force thinking for native Google requests
+        // Parse thinkingLevel suffix from model name in native Gemini generation requests
+        // Only handle generation requests: /v1beta/models/{modelName}:generateContent or :streamGenerateContent
+        const modelPathMatch = cleanPath.match(
+            /^(\/v1beta\/models\/)([^:]+)(:(generateContent|streamGenerateContent).*)$/
+        );
+        let modelThinkingLevel = null;
+
+        if (modelPathMatch) {
+            const pathPrefix = modelPathMatch[1];
+            const rawModelName = modelPathMatch[2];
+            const pathSuffix = modelPathMatch[3];
+
+            const FormatConverter = require("./FormatConverter");
+            const { cleanModelName, thinkingLevel } = FormatConverter.parseModelThinkingLevel(rawModelName);
+
+            if (thinkingLevel) {
+                modelThinkingLevel = thinkingLevel;
+                cleanPath = `${pathPrefix}${cleanModelName}${pathSuffix}`;
+                this.logger.info(
+                    `[Proxy] Detected thinkingLevel suffix in model path: "${rawModelName}" -> model="${cleanModelName}", thinkingLevel="${thinkingLevel}"`
+                );
+            }
+        }
+
+        // Force thinking for native Google requests (processed first)
         if (this.serverSystem.forceThinking && req.method === "POST" && bodyObj && bodyObj.contents) {
             if (!bodyObj.generationConfig) {
                 bodyObj.generationConfig = {};
@@ -1051,6 +1076,21 @@ class RequestHandler {
                     `[Proxy] ✅ Client-provided thinking config detected, skipping force injection. (Google Native)`
                 );
             }
+        }
+
+        // If thinkingLevel is parsed from model name suffix, inject into thinkingConfig (after force thinking, higher priority, direct override)
+        if (modelThinkingLevel && req.method === "POST" && bodyObj && bodyObj.contents) {
+            if (!bodyObj.generationConfig) {
+                bodyObj.generationConfig = {};
+            }
+            if (!bodyObj.generationConfig.thinkingConfig) {
+                bodyObj.generationConfig.thinkingConfig = {};
+            }
+            // Model name suffix thinkingLevel has highest priority, direct override
+            bodyObj.generationConfig.thinkingConfig.thinkingLevel = modelThinkingLevel;
+            this.logger.info(
+                `[Proxy] Applied thinkingLevel from model name suffix: ${modelThinkingLevel} (Google Native)`
+            );
         }
 
         // Pre-process native Google requests
