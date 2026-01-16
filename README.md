@@ -229,10 +229,8 @@ sudo docker compose down
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ibenzene/aistudiotoapi&type=date&legend=top-left)](https://www.star-history.com/#ibenzene/aistudiotoapi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=iBUHub/AIStudioToAPI&type=date&legend=top-left)](https://www.star-history.com/#iBUHub/AIStudioToAPI&type=date&legend=top-left)
 
-<a href="https://github.com/iBenzene/AIStudioToAPI/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=iBenzene/AIStudioToAPI" />
+<a href="https://github.com/iBUHub/AIStudioToAPI/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=iBUHub/AIStudioToAPI" />
 </a>
-
-Made with [contrib.rocks](https://contrib.rocks).
