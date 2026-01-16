@@ -28,8 +28,8 @@ class FormatConverter {
     /**
      * Parse thinkingLevel suffix from model name
      * Supports two formats:
-     *   - Parenthesis format: gemini-3-flash(minimal), gemini-3-pro(high)
-     *   - Hyphen format: gemini-3-flash-minimal, gemini-3-pro-high
+     *   - Parenthesis format: gemini-3-flash-preview(minimal), gemini-3-pro-preview(high)
+     *   - Hyphen format: gemini-3-flash-preview-minimal, gemini-3-pro-preview-high
      *
      * @param {string} modelName - Original model name
      * @returns {{ cleanModelName: string, thinkingLevel: string|null }}
@@ -179,7 +179,7 @@ class FormatConverter {
         // eslint-disable-line no-unused-vars
         this.logger.info("[Adapter] Starting translation of OpenAI request format to Google format...");
 
-        // Parse thinkingLevel suffix from model name (e.g., gemini-3-flash-minimal or gemini-3-flash(low))
+        // Parse thinkingLevel suffix from model name (e.g., gemini-3-flash-preview-minimal or gemini-3-flash-preview(low))
         const rawModel = openaiBody.model || "gemini-2.5-flash-lite";
         const { cleanModelName, thinkingLevel: modelThinkingLevel } = FormatConverter.parseModelThinkingLevel(rawModel);
 
