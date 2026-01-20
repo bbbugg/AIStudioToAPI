@@ -7,18 +7,92 @@
 
 /* eslint-env browser */
 
+const b64toBlob = (b64Data, contentType = "", sliceSize = 512) => {
+    const byteCharacters = atob(b64Data);
+    const byteArrays = [];
+    for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+        const slice = byteCharacters.slice(offset, offset + sliceSize);
+        const byteNumbers = new Array(slice.length);
+        for (let i = 0; i < slice.length; i++) {
+            byteNumbers[i] = slice.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        byteArrays.push(byteArray);
+    }
+    return new Blob(byteArrays, { type: contentType });
+};
+
 const Logger = {
-    enabled: true,
-    output(...messages) {
-        if (!this.enabled) return;
-        const timestamp =
-            new Date().toLocaleTimeString("zh-CN", { hour12: false }) +
-            "." +
-            new Date().getMilliseconds().toString().padStart(3, "0");
-        console.log(`[ProxyClient] ${timestamp}`, ...messages);
+    _log(level, levelName, ...messages) {
+        if (!this.enabled || level < this.currentLevel) return;
+
+        // BrowserManager will add timestamp via LoggingService when forwarding logs
+        // INFO level: keep original format without level tag for backward compatibility
+        // Other levels: show level tag for distinction
+        // Format: [ProxyClient] for INFO, [ProxyClient] Debug/Warn/Error: for others
+        let consolePrefix;
+        if (level === this.LEVELS.INFO) {
+            consolePrefix = `[ProxyClient]`;
+        } else {
+            // Capitalize first letter: DEBUG -> Debug, WARN -> Warn, ERROR -> Error
+            const levelLabel = levelName.charAt(0) + levelName.slice(1).toLowerCase();
+            consolePrefix = `[ProxyClient] ${levelLabel}:`;
+        }
+
+        switch (level) {
+            case this.LEVELS.ERROR:
+                console.error(consolePrefix, ...messages);
+                break;
+            case this.LEVELS.WARN:
+                console.warn(consolePrefix, ...messages);
+                break;
+            case this.LEVELS.DEBUG:
+                console.debug(consolePrefix, ...messages);
+                break;
+            default:
+                console.log(consolePrefix, ...messages);
+        }
+
+        // DOM output for debugging in browser page
         const logElement = document.createElement("div");
-        logElement.textContent = `[${timestamp}] ${messages.join(" ")}`;
+        if (level === this.LEVELS.INFO) {
+            logElement.textContent = messages.join(" ");
+        } else {
+            const levelLabel = levelName.charAt(0) + levelName.slice(1).toLowerCase();
+            logElement.textContent = `${levelLabel}: ${messages.join(" ")}`;
+        }
         document.body.appendChild(logElement);
+    },
+
+    // [BrowserManager Injection Point] Do not modify the line below.
+    // This line is dynamically replaced by BrowserManager.js based on LOG_LEVEL environment variable.
+    currentLevel: 1,
+
+    debug(...messages) {
+        this._log(this.LEVELS.DEBUG, "DEBUG", ...messages);
+    },
+
+    // Default: INFO
+    enabled: true,
+
+    error(...messages) {
+        this._log(this.LEVELS.ERROR, "ERROR", ...messages);
+    },
+
+    info(...messages) {
+        this._log(this.LEVELS.INFO, "INFO", ...messages);
+    },
+
+    // Log levels: DEBUG < INFO < WARN < ERROR (consistent with LoggingService.js)
+    LEVELS: { DEBUG: 0, ERROR: 3, INFO: 1, WARN: 2 },
+
+    // Backward compatible method for existing code
+    output(...messages) {
+        this.info(...messages);
+    },
+
+    warn(...messages) {
+        this._log(this.LEVELS.WARN, "WARN", ...messages);
     },
 };
 
@@ -158,21 +232,85 @@ class RequestProcessor {
     }
 
     _constructUrl(requestSpec) {
-        let pathSegment = requestSpec.path.startsWith("/") ? requestSpec.path.substring(1) : requestSpec.path;
-        const queryParams = new URLSearchParams(requestSpec.query_params);
-        if (requestSpec.streaming_mode === "fake") {
-            Logger.output("Buffered mode activated (Non-Stream / Fake-Stream), checking request details...");
-            if (pathSegment.includes(":streamGenerateContent")) {
-                pathSegment = pathSegment.replace(":streamGenerateContent", ":generateContent");
-                Logger.output(`API path modified to: ${pathSegment}`);
+        let pathAndQuery = requestSpec.url;
+
+        if (!pathAndQuery) {
+            const pathSegment = requestSpec.path || "";
+            const queryParams = new URLSearchParams(requestSpec.query_params);
+
+            // Handle fake streaming mode adjustments
+            if (requestSpec.streaming_mode === "fake") {
+                if (queryParams.has("alt") && queryParams.get("alt") === "sse") {
+                    queryParams.delete("alt");
+                }
             }
-            if (queryParams.has("alt") && queryParams.get("alt") === "sse") {
-                queryParams.delete("alt");
-                Logger.output('Removed "alt=sse" query parameter.');
+
+            // Special handling for legacy path construction if url not provided
+            let finalPath = pathSegment;
+            if (requestSpec.streaming_mode === "fake" && finalPath.includes(":streamGenerateContent")) {
+                finalPath = finalPath.replace(":streamGenerateContent", ":generateContent");
+            }
+
+            const queryString = queryParams.toString();
+            pathAndQuery = `${finalPath}${queryString ? "?" + queryString : ""}`;
+        }
+
+        // Rewriting absolute URLs (if provided)
+        if (pathAndQuery.match(/^https?:\/\//)) {
+            try {
+                const urlObj = new URL(pathAndQuery);
+                const originalUrl = pathAndQuery;
+                pathAndQuery = urlObj.pathname + urlObj.search;
+                Logger.output(`Rewriting absolute URL: ${originalUrl} -> ${pathAndQuery}`);
+            } catch (e) {
+                Logger.output("URL parsing warning:", e.message);
             }
         }
-        const queryString = queryParams.toString();
-        return `https://${this.targetDomain}/${pathSegment}${queryString ? "?" + queryString : ""}`;
+
+        let targetHost = this.targetDomain;
+        if (pathAndQuery.includes("__proxy_host__=")) {
+            try {
+                const tempUrl = new URL(pathAndQuery, "http://dummy");
+                const params = tempUrl.searchParams;
+                if (params.has("__proxy_host__")) {
+                    targetHost = params.get("__proxy_host__");
+                    params.delete("__proxy_host__");
+                    pathAndQuery = tempUrl.pathname + tempUrl.search;
+                    Logger.debug(`Dynamically switching target host: ${targetHost}`);
+                }
+            } catch (e) {
+                Logger.output("Failed to parse proxy host:", e.message);
+            }
+        }
+
+        let cleanPath = pathAndQuery.replace(/^\/+/, "");
+        const method = requestSpec.method ? requestSpec.method.toUpperCase() : "GET";
+
+        if (this.targetDomain.includes("generativelanguage")) {
+            const versionRegex = /v1[a-z0-9]*\/files/;
+            const uploadMatch = cleanPath.match(new RegExp(`upload/${versionRegex.source}`));
+
+            if (uploadMatch) {
+                // If path already contains upload/, just ensure it's correct
+                const index = cleanPath.indexOf("upload/");
+                if (index > 0) {
+                    const fixedPath = cleanPath.substring(index);
+                    Logger.output(`Corrected path: ${cleanPath} -> ${fixedPath}`);
+                    cleanPath = fixedPath;
+                }
+            } else if (method === "POST") {
+                // Detect if it starts with version and 'files', e.g. v1beta/files
+                const filesPathMatch = cleanPath.match(new RegExp(`^${versionRegex.source}`));
+                if (filesPathMatch) {
+                    cleanPath = "upload/" + cleanPath;
+                    Logger.output("Auto-completing upload path:", cleanPath);
+                }
+            }
+        }
+
+        const finalUrl = `https://${targetHost}/${cleanPath}`;
+        Logger.debug(`Constructed URL: ${pathAndQuery} -> ${finalUrl}`);
+        return finalUrl;
     }
 
     _generateRandomString(length) {
@@ -189,84 +327,130 @@ class RequestProcessor {
             signal,
         };
 
-        if (["POST", "PUT", "PATCH"].includes(requestSpec.method) && requestSpec.body) {
-            try {
-                const bodyObj = JSON.parse(requestSpec.body);
+        if (["POST", "PUT", "PATCH"].includes(requestSpec.method)) {
+            if (!requestSpec.is_generative && requestSpec.body_b64) {
+                const contentType = requestSpec.headers?.["content-type"] || "";
+                config.body = b64toBlob(requestSpec.body_b64, contentType);
+                Logger.output("Using binary body (Base64 decoded) for non-generative request");
+            } else if (requestSpec.body) {
+                try {
+                    const bodyObj = JSON.parse(requestSpec.body);
 
-                // --- Module 1: Image/Embedding/TTS Model Filtering ---
-                // Remove tools, thinkingConfig, responseModalities
-                const isImageModel = requestSpec.path.includes("-image") || requestSpec.path.includes("imagen");
-                const isEmbeddingOrTtsModel =
-                    requestSpec.path.includes("embedding") || requestSpec.path.includes("tts");
-                if (isImageModel || isEmbeddingOrTtsModel) {
-                    const incompatibleKeys = ["tool_config", "toolChoice", "tools"];
-                    incompatibleKeys.forEach(key => {
-                        if (Object.prototype.hasOwnProperty.call(bodyObj, key)) delete bodyObj[key];
-                    });
-                    if (bodyObj.generationConfig?.thinkingConfig) {
-                        delete bodyObj.generationConfig.thinkingConfig;
+                    // --- Module 1: Image/Embedding/TTS Model Filtering ---
+                    // These models do NOT support: tools, thinkingConfig, systemInstruction, response_mime_type
+                    const isImageModel = requestSpec.path.includes("-image") || requestSpec.path.includes("imagen");
+                    const isEmbeddingModel = requestSpec.path.includes("embedding");
+                    const isTtsModel = requestSpec.path.includes("tts");
+                    if (isImageModel || isEmbeddingModel || isTtsModel) {
+                        // Remove tools
+                        const incompatibleKeys = ["toolConfig", "tool_config", "toolChoice", "tools"];
+                        incompatibleKeys.forEach(key => {
+                            if (Object.prototype.hasOwnProperty.call(bodyObj, key)) delete bodyObj[key];
+                        });
+                        // Remove thinkingConfig
+                        if (bodyObj.generationConfig?.thinkingConfig) {
+                            delete bodyObj.generationConfig.thinkingConfig;
+                        }
+                        // Remove systemInstruction
+                        if (bodyObj.systemInstruction) {
+                            delete bodyObj.systemInstruction;
+                        }
+                        // Remove response_mime_type
+                        if (bodyObj.generationConfig?.response_mime_type) {
+                            delete bodyObj.generationConfig.response_mime_type;
+                        }
+                        if (bodyObj.generationConfig?.responseMimeType) {
+                            delete bodyObj.generationConfig.responseMimeType;
+                        }
                     }
+
+                    // --- Module 1.5: responseModalities Handling ---
+                    // Image: keep as-is (needed for image generation)
+                    // Embedding: remove
+                    // TTS: force to ["AUDIO"]
+                    if (isTtsModel) {
+                        if (!bodyObj.generationConfig) {
+                            bodyObj.generationConfig = {};
+                        }
+                        bodyObj.generationConfig.responseModalities = ["AUDIO"];
+                        Logger.output("TTS model detected, setting responseModalities to AUDIO");
+                    } else if (isEmbeddingModel) {
+                        if (bodyObj.generationConfig?.responseModalities) {
+                            delete bodyObj.generationConfig.responseModalities;
+                        }
+                    }
+
+                    // --- Module 2: Computer-Use Model Filtering ---
+                    // Remove tools, responseModalities
+                    const isComputerUseModel = requestSpec.path.includes("computer-use");
+                    if (isComputerUseModel) {
+                        const incompatibleKeys = ["tool_config", "toolChoice", "tools"];
+                        incompatibleKeys.forEach(key => {
+                            if (Object.prototype.hasOwnProperty.call(bodyObj, key)) delete bodyObj[key];
+                        });
+                        if (bodyObj.generationConfig?.responseModalities) {
+                            delete bodyObj.generationConfig.responseModalities;
+                        }
+                    }
+
+                    // --- Module 3: Robotics Model Filtering ---
+                    // Remove googleSearch, urlContext from tools; also remove responseModalities
+                    const isRoboticsModel = requestSpec.path.includes("robotics");
+                    if (isRoboticsModel) {
+                        if (Array.isArray(bodyObj.tools)) {
+                            bodyObj.tools = bodyObj.tools.filter(t => !t.googleSearch && !t.urlContext);
+                            if (bodyObj.tools.length === 0) delete bodyObj.tools;
+                        }
+                        if (bodyObj.generationConfig?.responseModalities) {
+                            delete bodyObj.generationConfig.responseModalities;
+                        }
+                    }
+
+                    // adapt gemini 3 pro preview
+                    // if raise `400 INVALID_ARGUMENT`, try to delete `thinkingLevel`
+                    // if (bodyObj.generationConfig?.thinkingConfig?.thinkingLevel) {
+                    //     delete bodyObj.generationConfig.thinkingConfig.thinkingLevel;
+                    // }
+
+                    // upper case `thinkingLevel`
+                    if (bodyObj.generationConfig?.thinkingConfig?.thinkingLevel) {
+                        bodyObj.generationConfig.thinkingConfig.thinkingLevel = String(
+                            bodyObj.generationConfig.thinkingConfig.thinkingLevel
+                        ).toUpperCase();
+                    }
+
+                    // upper case `responseModalities`
                     if (bodyObj.generationConfig?.responseModalities) {
-                        delete bodyObj.generationConfig.responseModalities;
+                        if (Array.isArray(bodyObj.generationConfig.responseModalities)) {
+                            bodyObj.generationConfig.responseModalities =
+                                bodyObj.generationConfig.responseModalities.map(m =>
+                                    typeof m === "string" ? m.toUpperCase() : m
+                                );
+                        } else if (typeof bodyObj.generationConfig.responseModalities === "string") {
+                            bodyObj.generationConfig.responseModalities = [
+                                bodyObj.generationConfig.responseModalities.toUpperCase(),
+                            ];
+                        }
                     }
+
+                    // if raise `400 INVALID_ARGUMENT`, try to delete `thoughtSignature`
+                    // if (Array.isArray(bodyObj.contents)) {
+                    //     bodyObj.contents.forEach(msg => {
+                    //         if (Array.isArray(msg.parts)) {
+                    //             msg.parts.forEach(part => {
+                    //                 if (part.thoughtSignature) {
+                    //                     delete part.thoughtSignature;
+                    //                 }
+                    //             });
+                    //         }
+                    //     });
+                    // }
+
+                    config.body = JSON.stringify(bodyObj);
+                } catch (e) {
+                    Logger.output("Error occurred while processing request body:", e.message);
+                    config.body = requestSpec.body;
                 }
-
-                // --- Module 2: Computer-Use Model Filtering ---
-                // Remove tools, responseModalities
-                const isComputerUseModel = requestSpec.path.includes("computer-use");
-                if (isComputerUseModel) {
-                    const incompatibleKeys = ["tool_config", "toolChoice", "tools"];
-                    incompatibleKeys.forEach(key => {
-                        if (Object.prototype.hasOwnProperty.call(bodyObj, key)) delete bodyObj[key];
-                    });
-                    if (bodyObj.generationConfig?.responseModalities) {
-                        delete bodyObj.generationConfig.responseModalities;
-                    }
-                }
-
-                // --- Module 3: Robotics Model Filtering ---
-                // Remove googleSearch, urlContext from tools; also remove responseModalities
-                const isRoboticsModel = requestSpec.path.includes("robotics");
-                if (isRoboticsModel) {
-                    if (Array.isArray(bodyObj.tools)) {
-                        bodyObj.tools = bodyObj.tools.filter(t => !t.googleSearch && !t.urlContext);
-                        if (bodyObj.tools.length === 0) delete bodyObj.tools;
-                    }
-                    if (bodyObj.generationConfig?.responseModalities) {
-                        delete bodyObj.generationConfig.responseModalities;
-                    }
-                }
-
-                // adapt gemini 3 pro preview
-                // if raise `400 INVALID_ARGUMENT`, try to delete `thinkingLevel`
-                // if (bodyObj.generationConfig?.thinkingConfig?.thinkingLevel) {
-                //     delete bodyObj.generationConfig.thinkingConfig.thinkingLevel;
-                // }
-
-                // upper case `thinkingLevel`
-                if (bodyObj.generationConfig?.thinkingConfig?.thinkingLevel) {
-                    bodyObj.generationConfig.thinkingConfig.thinkingLevel = String(
-                        bodyObj.generationConfig.thinkingConfig.thinkingLevel
-                    ).toUpperCase();
-                }
-
-                // if raise `400 INVALID_ARGUMENT`, try to delete `thoughtSignature`
-                // if (Array.isArray(bodyObj.contents)) {
-                //     bodyObj.contents.forEach(msg => {
-                //         if (Array.isArray(msg.parts)) {
-                //             msg.parts.forEach(part => {
-                //                 if (part.thoughtSignature) {
-                //                     delete part.thoughtSignature;
-                //                 }
-                //             });
-                //         }
-                //     });
-                // }
-
-                config.body = JSON.stringify(bodyObj);
-            } catch (e) {
-                Logger.output("Error occurred while processing request body:", e.message);
-                config.body = requestSpec.body;
             }
         }
 
@@ -275,7 +459,8 @@ class RequestProcessor {
 
     _sanitizeHeaders(headers) {
         const sanitized = { ...headers };
-        [
+        // Follow BuildProxy's forbidden list exactly
+        const forbiddenHeaders = [
             "host",
             "connection",
             "content-length",
@@ -285,7 +470,9 @@ class RequestProcessor {
             "sec-fetch-mode",
             "sec-fetch-site",
             "sec-fetch-dest",
-        ].forEach(h => delete sanitized[h]);
+        ];
+
+        forbiddenHeaders.forEach(h => delete sanitized[h]);
         return sanitized;
     }
 
@@ -297,7 +484,7 @@ class RequestProcessor {
             controller.abort();
         }
     }
-} // <--- Critical! Ensure this bracket exists
+}
 
 class ProxySystem extends EventTarget {
     constructor(websocketEndpoint) {
@@ -336,6 +523,16 @@ class ProxySystem extends EventTarget {
                     // If it's a cancel instruction, call the cancel method
                     this.requestProcessor.cancelOperation(requestSpec.request_id);
                     break;
+                case "set_log_level":
+                    // Dynamic log level adjustment at runtime
+                    if (Logger.LEVELS[requestSpec.level] !== undefined) {
+                        const oldLevel = Object.keys(Logger.LEVELS).find(k => Logger.LEVELS[k] === Logger.currentLevel);
+                        Logger.currentLevel = Logger.LEVELS[requestSpec.level];
+                        Logger.info(`Log level changed: ${oldLevel} -> ${requestSpec.level}`);
+                    } else {
+                        Logger.warn(`Invalid log level: ${requestSpec.level}`);
+                    }
+                    break;
                 default:
                     // Default case, treat as proxy request
                     // [Final Optimization] Display path directly, no longer display mode as path itself is clear enough
@@ -372,9 +569,10 @@ class ProxySystem extends EventTarget {
                 throw new DOMException("The user aborted a request.", "AbortError");
             }
 
-            this._transmitHeaders(response, operationId);
+            this._transmitHeaders(response, operationId, requestSpec.headers?.host);
             const reader = response.body.getReader();
             const textDecoder = new TextDecoder();
+
             let fullBody = "";
 
             // --- Core modification: Correctly dispatch streaming and non-streaming data inside the loop ---
@@ -389,13 +587,9 @@ class ProxySystem extends EventTarget {
                 cancelTimeout();
 
                 const chunk = textDecoder.decode(value, { stream: true });
-
                 if (mode === "real") {
-                    // Streaming mode: immediately forward each data chunk
                     this._transmitChunk(chunk, operationId);
                 } else {
-                    // fake mode
-                    // Non-streaming mode: concatenate data chunks, wait to forward all at once at the end
                     fullBody += chunk;
                 }
             }
@@ -424,10 +618,25 @@ class ProxySystem extends EventTarget {
         }
     }
 
-    _transmitHeaders(response, operationId) {
+    _transmitHeaders(response, operationId, proxyHost) {
         const headerMap = {};
         response.headers.forEach((v, k) => {
-            headerMap[k] = v;
+            const lowerKey = k.toLowerCase();
+            if ((lowerKey === "location" || lowerKey === "x-goog-upload-url") && v.includes("googleapis.com")) {
+                try {
+                    const urlObj = new URL(v);
+                    const host = proxyHost || location.host;
+                    const separator = urlObj.search ? "&" : "?";
+                    const newSearch = `${urlObj.search}${separator}__proxy_host__=${urlObj.host}`;
+                    const newUrl = `${location.protocol}//${host}${urlObj.pathname}${newSearch}`;
+                    headerMap[k] = newUrl;
+                    Logger.debug(`Rewriting header ${k}: ${v} -> ${headerMap[k]}`);
+                } catch (e) {
+                    headerMap[k] = v;
+                }
+            } else {
+                headerMap[k] = v;
+            }
         });
         this.connectionManager.transmit({
             event_type: "response_headers",
@@ -437,10 +646,10 @@ class ProxySystem extends EventTarget {
         });
     }
 
-    _transmitChunk(chunk, operationId) {
-        if (!chunk) return;
+    _transmitChunk(data, operationId) {
+        if (!data) return;
         this.connectionManager.transmit({
-            data: chunk,
+            data,
             event_type: "chunk",
             request_id: operationId,
         });

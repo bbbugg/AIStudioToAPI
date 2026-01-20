@@ -2,8 +2,7 @@ name: Release Notification
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 permissions:
   contents: read

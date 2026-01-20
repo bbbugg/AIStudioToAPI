@@ -10,6 +10,8 @@ const { EventEmitter } = require("events");
 const express = require("express");
 const WebSocket = require("ws");
 const http = require("http");
+const https = require("https");
+const fs = require("fs");
 const net = require("net");
 const { URL } = require("url");
 
@@ -205,7 +207,27 @@ class ProxyServerSystem extends EventEmitter {
 
     async _startHttpServer() {
         const app = this._createExpressApp();
-        this.httpServer = http.createServer(app);
+
+        if (this.config.sslKeyPath && this.config.sslCertPath) {
+            try {
+                if (fs.existsSync(this.config.sslKeyPath) && fs.existsSync(this.config.sslCertPath)) {
+                    const options = {
+                        cert: fs.readFileSync(this.config.sslCertPath),
+                        key: fs.readFileSync(this.config.sslKeyPath),
+                    };
+                    this.httpServer = https.createServer(options, app);
+                    this.logger.info("[System] Starting in HTTPS mode...");
+                } else {
+                    this.logger.warn("[System] SSL file paths provided but files not found. Falling back to HTTP.");
+                    this.httpServer = http.createServer(app);
+                }
+            } catch (error) {
+                this.logger.error(`[System] Failed to load SSL files: ${error.message}. Falling back to HTTP.`);
+                this.httpServer = http.createServer(app);
+            }
+        } else {
+            this.httpServer = http.createServer(app);
+        }
 
         this.httpServer.on("upgrade", (req, socket) => {
             const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
@@ -280,23 +302,6 @@ class ProxyServerSystem extends EventEmitter {
     _createExpressApp() {
         const app = express();
 
-        // CORS middleware
-        app.use((req, res, next) => {
-            res.header("Access-Control-Allow-Origin", "*");
-            res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-            res.header(
-                "Access-Control-Allow-Headers",
-                "Content-Type, Authorization, x-requested-with, x-api-key, x-goog-api-key, x-goog-api-client, x-user-agent," +
-                    " origin, accept, baggage, sentry-trace, openai-organization, openai-project, openai-beta, x-stainless-lang, " +
-                    "x-stainless-package-version, x-stainless-os, x-stainless-arch, x-stainless-runtime, x-stainless-runtime-version, " +
-                    "x-stainless-retry-count, x-stainless-timeout, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform"
-            );
-            if (req.method === "OPTIONS") {
-                return res.sendStatus(204);
-            }
-            next();
-        });
-
         // Request logging
         app.use((req, res, next) => {
             if (
@@ -311,8 +316,77 @@ class ProxyServerSystem extends EventEmitter {
             next();
         });
 
-        app.use(express.json({ limit: "100mb" }));
-        app.use(express.urlencoded({ extended: true }));
+        // CORS middleware
+        app.use((req, res, next) => {
+            res.header("Access-Control-Allow-Origin", "*");
+            res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+            res.header("Access-Control-Allow-Private-Network", "true");
+            res.header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, Authorization, x-requested-with, x-api-key, x-goog-api-key, x-goog-api-client, x-user-agent," +
+                    " origin, accept, baggage, sentry-trace, openai-organization, openai-project, openai-beta, x-stainless-lang, " +
+                    "x-stainless-package-version, x-stainless-os, x-stainless-arch, x-stainless-runtime, x-stainless-runtime-version, " +
+                    "x-stainless-retry-count, x-stainless-timeout, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, " +
+                    "x-goog-upload-protocol, x-goog-upload-command, x-goog-upload-header-content-length, " +
+                    "x-goog-upload-header-content-type, x-goog-upload-url, x-goog-upload-offset, x-goog-upload-status"
+            );
+
+            // Expose all common Headers, including upload related ones (matched from BuildProxy)
+            res.header("Access-Control-Expose-Headers", "*");
+            res.header(
+                "Access-Control-Expose-Headers",
+                "x-goog-upload-url, x-goog-upload-status, x-goog-upload-chunk-granularity, " +
+                    "x-goog-upload-control-url, x-goog-upload-command, x-goog-upload-content-type, " +
+                    "x-goog-upload-protocol, x-goog-upload-file-name, x-goog-upload-offset, " +
+                    "date, content-type, content-length, location"
+            );
+
+            if (req.method === "OPTIONS") {
+                return res.sendStatus(204);
+            }
+            next();
+        });
+
+        // Manual body collection middleware (BuildProxy style)
+        // Collects the entire raw body into req.rawBody as a Buffer
+        // Also attempts to parse JSON into req.body for compatibility
+        app.use((req, res, next) => {
+            if (req.method === "GET" || req.method === "OPTIONS" || req.method === "HEAD") {
+                return next();
+            }
+
+            const chunks = [];
+            req.on("data", chunk => chunks.push(chunk));
+            req.on("end", () => {
+                req.rawBody = Buffer.concat(chunks);
+
+                // Try to parse JSON for req.body compatibility
+                if (req.headers["content-type"]?.includes("application/json")) {
+                    try {
+                        req.body = JSON.parse(req.rawBody.toString());
+                    } catch (e) {
+                        // Not valid JSON, keep req.body undefined or empty
+                        req.body = {};
+                    }
+                } else if (req.headers["content-type"]?.includes("application/x-www-form-urlencoded")) {
+                    try {
+                        const qs = require("querystring");
+                        req.body = qs.parse(req.rawBody.toString());
+                    } catch (e) {
+                        req.body = {};
+                    }
+                } else {
+                    req.body = {};
+                }
+
+                next();
+            });
+
+            req.on("error", err => {
+                this.logger.error(`[System] Request stream error: ${err.message}`);
+                next(err);
+            });
+        });
 
         // Serve static files from ui/dist (Vite build output)
         const path = require("path");
@@ -364,6 +438,12 @@ class ProxyServerSystem extends EventEmitter {
                 "Error: WebSocket connection failed. " +
                     "If you are using a proxy (like Nginx), ensure it is configured to forward 'Upgrade' and 'Connection' headers."
             );
+        });
+
+        // File Upload Routes
+        // Intercept upload requests to use specialized handler
+        app.all(/\/upload\/.*/, (req, res) => {
+            this.requestHandler.processUploadRequest(req, res);
         });
 
         app.all(/(.*)/, (req, res) => {

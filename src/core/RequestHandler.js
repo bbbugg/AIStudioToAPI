@@ -321,11 +321,11 @@ class RequestHandler {
                 if (this.serverSystem.streamingMode === "fake") {
                     await this._handlePseudoStreamResponse(proxyRequest, messageQueue, req, res);
                 } else {
-                    await this._handleRealStreamResponse(proxyRequest, messageQueue, res);
+                    await this._handleRealStreamResponse(proxyRequest, messageQueue, req, res);
                 }
             } else {
                 proxyRequest.streaming_mode = "fake";
-                await this._handleNonStreamResponse(proxyRequest, messageQueue, res);
+                await this._handleNonStreamResponse(proxyRequest, messageQueue, req, res);
             }
         } catch (error) {
             this._handleRequestError(error, res);
@@ -340,6 +340,72 @@ class RequestHandler {
                 });
                 this.needsSwitchingAfterRequest = false;
             }
+        }
+    }
+
+    // Process File Upload requests
+    async processUploadRequest(req, res) {
+        const requestId = this._generateRequestId();
+        this.logger.info(`[Upload] Processing upload request ${req.method} ${req.path} (ID: ${requestId})`);
+
+        // Check browser connection
+        if (!this.connectionRegistry.hasActiveConnections()) {
+            const recovered = await this._handleBrowserRecovery(res);
+            if (!recovered) return;
+        }
+
+        // Wait for system to become ready if it's busy
+        if (this.authSwitcher.isSystemBusy) {
+            const ready = await this._waitForSystemReady();
+            if (!ready) {
+                return this._sendErrorResponse(
+                    res,
+                    503,
+                    "Server undergoing internal maintenance (account switching/recovery), please try again later."
+                );
+            }
+            if (!this.connectionRegistry.hasActiveConnections()) {
+                const connectionReady = await this._waitForConnection(10000);
+                if (!connectionReady) {
+                    return this._sendErrorResponse(
+                        res,
+                        503,
+                        "Service temporarily unavailable: Connection not established after switching."
+                    );
+                }
+            }
+        }
+
+        if (this.browserManager) {
+            this.browserManager.notifyUserActivity();
+        }
+
+        res.on("close", () => {
+            if (!res.writableEnded) {
+                this.logger.warn(`[Upload] Client closed request #${requestId} connection prematurely.`);
+                this._cancelBrowserRequest(requestId);
+            }
+        });
+
+        const proxyRequest = {
+            body_b64: req.rawBody ? req.rawBody.toString("base64") : undefined,
+            headers: req.headers,
+            is_generative: false, // Uploads are never generative
+            method: req.method,
+            path: req.path.replace(/^\/proxy/, ""),
+            query_params: req.query || {},
+            request_id: requestId,
+            streaming_mode: "fake", // Uploads always return a single JSON response
+        };
+
+        const messageQueue = this.connectionRegistry.createMessageQueue(requestId);
+
+        try {
+            await this._handleNonStreamResponse(proxyRequest, messageQueue, req, res);
+        } catch (error) {
+            this._handleRequestError(error, res);
+        } finally {
+            this.connectionRegistry.removeMessageQueue(requestId);
         }
     }
 
@@ -689,7 +755,7 @@ class RequestHandler {
         }
     }
 
-    async _handleRealStreamResponse(proxyRequest, messageQueue, res) {
+    async _handleRealStreamResponse(proxyRequest, messageQueue, req, res) {
         this.logger.info(`[Request] Request dispatched to browser for processing...`);
         this._forwardRequest(proxyRequest);
         const headerMessage = await messageQueue.dequeue();
@@ -715,7 +781,7 @@ class RequestHandler {
             this.authSwitcher.failureCount = 0;
         }
 
-        this._setResponseHeaders(res, headerMessage);
+        this._setResponseHeaders(res, headerMessage, req);
         this.logger.info("[Request] Starting streaming transmission...");
         try {
             let lastChunk = "";
@@ -757,7 +823,7 @@ class RequestHandler {
         }
     }
 
-    async _handleNonStreamResponse(proxyRequest, messageQueue, res) {
+    async _handleNonStreamResponse(proxyRequest, messageQueue, req, res) {
         this.logger.info(`[Request] Entering non-stream processing mode...`);
 
         try {
@@ -783,7 +849,7 @@ class RequestHandler {
             }
 
             const headerMessage = result.message;
-            let fullBody = "";
+            const chunks = [];
             let receiving = true;
             while (receiving) {
                 const message = await messageQueue.dequeue(300000);
@@ -793,12 +859,14 @@ class RequestHandler {
                     break;
                 }
                 if (message.event_type === "chunk" && message.data) {
-                    fullBody += message.data;
+                    chunks.push(Buffer.from(message.data));
                 }
             }
 
+            const fullBodyBuffer = Buffer.concat(chunks);
+
             try {
-                const fullResponse = JSON.parse(fullBody);
+                const fullResponse = JSON.parse(fullBodyBuffer.toString());
                 const finishReason = fullResponse.candidates?.[0]?.finishReason || "UNKNOWN";
                 this.logger.info(
                     `✅ [Request] Response ended, reason: ${finishReason}, request ID: ${proxyRequest.request_id}`
@@ -807,9 +875,14 @@ class RequestHandler {
                 // Ignore JSON parsing errors for finish reason
             }
 
-            res.status(headerMessage.status || 200)
-                .type("application/json")
-                .send(fullBody || "{}");
+            this._setResponseHeaders(res, headerMessage, req);
+
+            // Ensure Content-Type is set (Express defaults Buffer to application/octet-stream)
+            if (!res.get("Content-Type")) {
+                res.type("application/json");
+            }
+
+            res.send(fullBodyBuffer);
 
             this.logger.info(`[Request] Complete non-stream response sent to client.`);
         } catch (error) {
@@ -963,11 +1036,59 @@ class RequestHandler {
         }
     }
 
-    _setResponseHeaders(res, headerMessage) {
+    _setResponseHeaders(res, headerMessage, req) {
         res.status(headerMessage.status || 200);
         const headers = headerMessage.headers || {};
+
+        // Filter headers that might cause CORS conflicts
+        const forbiddenHeaders = [
+            "access-control-allow-origin",
+            "access-control-allow-methods",
+            "access-control-allow-headers",
+        ];
+
         Object.entries(headers).forEach(([name, value]) => {
-            if (name.toLowerCase() !== "content-length") res.set(name, value);
+            const lowerName = name.toLowerCase();
+            if (forbiddenHeaders.includes(lowerName)) return;
+            if (lowerName === "content-length") return;
+
+            // Special handling for upload URL and redirects: point them back to this proxy
+            if ((lowerName === "x-goog-upload-url" || lowerName === "location") && value.includes("googleapis.com")) {
+                try {
+                    const urlObj = new URL(value);
+                    // Construct local proxy URL using configured host/port
+                    // Note: The client (build.js) might have already embedded the original host in __proxy_host__
+                    // But wait, headerMessage comes from the BROWSER.
+                    // If the Browser sends back the header as received from Google, then it's the GOOGLE URL.
+                    // If the Browser rewrote it, it's the LOCALHOST URL.
+                    // build.js `_transmitHeaders` rewrites it!
+
+                    // So `value` is `http://localhost:xxxx/...&__proxy_host__=google.com` (from Browser)
+                    // We just need to ensure it points to *our* current listener address.
+
+                    // Use the Host header from the request to support remote clients (e.g. Docker IPs)
+                    // If req.headers.host exists (standard), use it. Otherwise fallback to config.
+                    let newAuthority;
+                    if (req && req.headers && req.headers.host) {
+                        newAuthority = req.headers.host;
+                    } else {
+                        const host =
+                            this.serverSystem.config.host === "0.0.0.0" ? "127.0.0.1" : this.serverSystem.config.host;
+                        newAuthority = `${host}:${this.serverSystem.config.httpPort}`;
+                    }
+
+                    const protocol =
+                        req.secure || (req.get && req.get("X-Forwarded-Proto") === "https") ? "https" : "http";
+                    const newUrl = `${protocol}://${newAuthority}${urlObj.pathname}${urlObj.search}`;
+
+                    this.logger.debug(`[Response] Debug: Rewriting header ${name}: ${value} -> ${newUrl}`);
+                    res.set(name, newUrl);
+                } catch (e) {
+                    res.set(name, value);
+                }
+            } else {
+                res.set(name, value);
+            }
         });
     }
 
@@ -1022,6 +1143,41 @@ class RequestHandler {
             );
         } else {
             this.logger.warn(`[Request] Unable to send cancel instruction: No available WebSocket connection.`);
+        }
+    }
+
+    /**
+     * Set browser (build.js) log level at runtime
+     * @param {string} level - 'DEBUG', 'INFO', 'WARN', or 'ERROR'
+     * @returns {boolean} true if message sent successfully, false otherwise
+     */
+    setBrowserLogLevel(level) {
+        const validLevels = ["DEBUG", "INFO", "WARN", "ERROR"];
+        const upperLevel = level?.toUpperCase();
+
+        if (!validLevels.includes(upperLevel)) {
+            return false;
+        }
+
+        const connection = this.connectionRegistry.getFirstConnection();
+        if (connection) {
+            connection.send(
+                JSON.stringify({
+                    event_type: "set_log_level",
+                    level: upperLevel,
+                })
+            );
+            this.logger.info(`[Config] Browser log level set to: ${upperLevel}`);
+
+            // Also update server-side LoggingService level to keep in sync
+            const LoggingService = require("../utils/LoggingService");
+            LoggingService.setLevel(upperLevel);
+            this.logger.info(`[Config] Server log level synchronized to: ${upperLevel}`);
+
+            return true;
+        } else {
+            this.logger.warn(`[Config] Unable to set browser log level: No available WebSocket connection.`);
+            return false;
         }
     }
 
@@ -1154,6 +1310,9 @@ class RequestHandler {
         return {
             body: req.method !== "GET" ? JSON.stringify(bodyObj) : undefined,
             headers: req.headers,
+            is_generative:
+                req.method === "POST" &&
+                (req.path.includes("generateContent") || req.path.includes("streamGenerateContent")),
             method: req.method,
             path: cleanPath,
             query_params: req.query || {},

@@ -441,7 +441,7 @@ const ensureNodeModules = () => {
         return;
     }
     console.log(getText("正在安装 npm 依赖...", "Installing npm dependencies..."));
-    execOrThrow(npmCommand(), ["install"], { cwd: PROJECT_ROOT });
+    execOrThrow(npmCommand(), ["install"], { cwd: PROJECT_ROOT, shell: true });
 };
 
 const runSaveAuth = camoufoxExecutablePath => {

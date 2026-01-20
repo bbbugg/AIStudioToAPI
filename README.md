@@ -4,15 +4,13 @@
 
 一个将 Google AI Studio 网页端封装为兼容 OpenAI API 和 Gemini API 的工具。该服务将充当代理，将 API 请求转换为与 AI Studio 网页界面的浏览器交互。
 
-> **👏 鸣谢**：本项目为基于 [Ellinav](https://github.com/Ellinav) 的 [ais2api](https://github.com/Ellinav/ais2api) 分支进行的二次开发，我们对原作者创立这个优秀的项目表示诚挚的感谢。
-
 ## ✨ 功能特性
 
 - 🔄 **API 兼容性**：同时兼容 OpenAI API 和 Gemini API 格式
 - 🌐 **网页自动化**：使用浏览器自动化技术与 AI Studio 网页界面交互
 - 🔐 **身份验证**：基于 API 密钥的安全认证机制
 - 🔧 **支持工具调用**：OpenAI 和 Gemini 接口均支持 Tool Calls (Function Calling)
-- 📝 **模型支持**：通过 AI Studio 访问各种 Gemini 模型，包括生图模型
+- 📝 **模型支持**：通过 AI Studio 访问各种 Gemini 模型，包括生图模型和 TTS 语音合成模型
 - 🎨 **主页展示控制**：提供可视化的 Web 控制台，支持账号管理、VNC 登录等操作
 
 ## 🚀 快速开始
@@ -21,32 +19,35 @@
 
 1. 克隆仓库：
 
-```bash
-git clone https://github.com/iBUHub/AIStudioToAPI.git
-cd AIStudioToAPI
-```
+   ```bash
+   git clone https://github.com/iBUHub/AIStudioToAPI.git
+   cd AIStudioToAPI
+   ```
 
 2. 运行快速设置脚本：
 
-```bash
-npm run setup-auth
-```
+   ```bash
+   npm run setup-auth
+   ```
 
-该脚本将：
+   该脚本将：
+   - 自动下载 Camoufox 浏览器（一个注重隐私的 Firefox 分支）
+   - 启动浏览器并自动导航到 AI Studio
+   - 在本地保存您的身份验证凭据
 
-- 自动下载 Camoufox 浏览器（一个注重隐私的 Firefox 分支）
-- 启动浏览器并自动导航到 AI Studio
-- 在本地保存您的身份验证凭据
+3. 配置环境变量（可选）：
 
-3. 启动服务：
+   复制根目录下的 `.env.example` 为 `.env`，并在 `.env` 中按需修改配置（如端口、API 密钥等）。
 
-```bash
-npm start
-```
+4. 启动服务：
 
-API 服务将在 `http://localhost:7860` 上运行。
+   ```bash
+   npm start
+   ```
 
-服务启动后，您可以在浏览器中访问 `http://localhost:7860` 打开 Web 控制台主页，在这里可以查看账号状态和服务状态。
+   API 服务将在 `http://localhost:7860` 上运行。
+
+   服务启动后，您可以在浏览器中访问 `http://localhost:7860` 打开 Web 控制台主页，在这里可以查看账号状态和服务状态。
 
 > ⚠ **注意：** 直接运行不支持通过 VNC 在线添加账号，需要使用 `npm run setup-auth` 脚本添加账号。当前 VNC 登录功能仅在 Docker 容器中可用。
 
@@ -117,6 +118,29 @@ sudo docker compose down
 
 **代理配置（可选）：** 如需使用代理访问 Google 服务，在 Docker 命令中添加 `-e HTTP_PROXY=http://your-proxy:port -e HTTPS_PROXY=http://your-proxy:port`，或在 `docker-compose.yml` 的 `environment` 中添加这两个环境变量。
 
+##### 🛠️ 方式 3：从源码构建
+
+如果您希望自己构建 Docker 镜像，可以使用以下命令：
+
+1. 构建镜像：
+
+   ```bash
+   docker build -t aistudio-to-api .
+   ```
+
+2. 运行容器：
+
+   ```bash
+   docker run -d \
+     --name aistudio-to-api \
+     -p 7860:7860 \
+     -v /path/to/auth:/app/configs/auth \
+     -e API_KEYS=your-api-key-1,your-api-key-2 \
+     -e TZ=Asia/Shanghai \
+     --restart unless-stopped \
+     aistudio-to-api
+   ```
+
 #### 🔑 步骤 2：账号管理
 
 部署后，您需要使用以下方式之一添加 Google 账号：
@@ -171,8 +195,8 @@ sudo docker compose down
 此端点转发到官方 Gemini API 格式端点。
 
 - `GET /v1beta/models`: 列出可用的 Gemini 模型。
-- `POST /v1beta/models/{model_name}:generateContent`: 生成内容和图片。
-- `POST /v1beta/models/{model_name}:streamGenerateContent`: 流式生成内容和图片，支持真流式和假流式。
+- `POST /v1beta/models/{model_name}:generateContent`: 生成内容、图片和语音。
+- `POST /v1beta/models/{model_name}:streamGenerateContent`: 流式生成内容、图片和语音，支持真流式和假流式。
 
 > 📖 详细的 API 使用示例请参阅：[API 使用示例文档](docs/zh/api-examples.md)
 
@@ -196,14 +220,15 @@ sudo docker compose down
 
 #### 🌐 代理配置
 
-| 变量名                          | 描述                                                 | 默认值    |
-| :------------------------------ | :--------------------------------------------------- | :-------- |
-| `INITIAL_AUTH_INDEX`            | 启动时使用的初始身份验证索引。                       | `0`       |
-| `MAX_RETRIES`                   | 请求失败后的最大重试次数（仅对假流式和非流式生效）。 | `3`       |
-| `RETRY_DELAY`                   | 两次重试之间的间隔（毫秒）。                         | `2000`    |
-| `SWITCH_ON_USES`                | 自动切换帐户前允许的请求次数（设为 `0` 禁用）。      | `40`      |
-| `FAILURE_THRESHOLD`             | 切换帐户前允许的连续失败次数（设为 `0` 禁用）。      | `3`       |
-| `IMMEDIATE_SWITCH_STATUS_CODES` | 触发立即切换帐户的 HTTP 状态码（逗号分隔）。         | `429,503` |
+| 变量名                          | 描述                                                                                                                       | 默认值    |
+| :------------------------------ | :------------------------------------------------------------------------------------------------------------------------- | :-------- |
+| `INITIAL_AUTH_INDEX`            | 启动时使用的初始身份验证索引。                                                                                             | `0`       |
+| `ENABLE_AUTH_UPDATE`            | 是否启用自动保存凭证更新。默认为启用状态，将在每次登录/切换账号成功时以及每 24 小时自动更新 auth 文件。设为 `false` 禁用。 | `true`    |
+| `MAX_RETRIES`                   | 请求失败后的最大重试次数（仅对假流式和非流式生效）。                                                                       | `3`       |
+| `RETRY_DELAY`                   | 两次重试之间的间隔（毫秒）。                                                                                               | `2000`    |
+| `SWITCH_ON_USES`                | 自动切换帐户前允许的请求次数（设为 `0` 禁用）。                                                                            | `40`      |
+| `FAILURE_THRESHOLD`             | 切换帐户前允许的连续失败次数（设为 `0` 禁用）。                                                                            | `3`       |
+| `IMMEDIATE_SWITCH_STATUS_CODES` | 触发立即切换帐户的 HTTP 状态码（逗号分隔）。                                                                               | `429,503` |
 
 #### 🗒️ 其他配置
 

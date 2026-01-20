@@ -4,15 +4,13 @@
 
 A tool that wraps Google AI Studio web interface to provide OpenAI API and Gemini API compatible endpoints. The service acts as a proxy, converting API requests to browser interactions with the AI Studio web interface.
 
-> **👏 Acknowledgements**: This project is forked from [ais2api](https://github.com/Ellinav/ais2api) by [Ellinav](https://github.com/Ellinav). We express our sincere gratitude to the original author for creating this excellent foundation.
-
 ## ✨ Features
 
 - 🔄 **API Compatibility**: Compatible with both OpenAI API and Gemini API formats
 - 🌐 **Web Automation**: Uses browser automation to interact with AI Studio web interface
 - 🔐 **Authentication**: Secure API key-based authentication
 - 🔧 **Tool Calls Support**: Both OpenAI and Gemini APIs support Tool Calls (Function Calling)
-- 📝 **Model Support**: Access to various Gemini models through AI Studio, including image generation models
+- 📝 **Model Support**: Access to various Gemini models through AI Studio, including image generation and TTS (text-to-speech) models
 - 🎨 **Homepage Display Control**: Provides a visual web console with account management, VNC login, and more
 
 ## 🚀 Quick Start
@@ -21,32 +19,35 @@ A tool that wraps Google AI Studio web interface to provide OpenAI API and Gemin
 
 1. Clone the repository:
 
-```bash
-git clone https://github.com/iBUHub/AIStudioToAPI.git
-cd AIStudioToAPI
-```
+   ```bash
+   git clone https://github.com/iBUHub/AIStudioToAPI.git
+   cd AIStudioToAPI
+   ```
 
 2. Run the setup script:
 
-```bash
-npm run setup-auth
-```
+   ```bash
+   npm run setup-auth
+   ```
 
-This script will:
+   This script will:
+   - Automatically download the Camoufox browser (a privacy-focused Firefox fork)
+   - Launch the browser and navigate to AI Studio automatically
+   - Save your authentication credentials locally
 
-- Automatically download the Camoufox browser (a privacy-focused Firefox fork)
-- Launch the browser and navigate to AI Studio automatically
-- Save your authentication credentials locally
+3. Configure Environment Variables (Optional):
 
-3. Start the service:
+   Copy `.env.example` in the root directory to `.env`, and modify settings in `.env` as needed (e.g., port, API Key).
 
-```bash
-npm start
-```
+4. Start the service:
 
-The API server will be available at `http://localhost:7860`
+   ```bash
+   npm start
+   ```
 
-After the service starts, you can access `http://localhost:7860` in your browser to open the web console homepage, where you can view account status and service status.
+   The API server will be available at `http://localhost:7860`
+
+   After the service starts, you can access `http://localhost:7860` in your browser to open the web console homepage, where you can view account status and service status.
 
 > ⚠ **Note:** Running directly does not support adding accounts via VNC online. You need to use the `npm run setup-auth` script to add accounts. VNC login is only available in Docker deployments.
 
@@ -117,6 +118,29 @@ sudo docker compose down
 
 **Proxy Configuration (Optional):** If you need to use a proxy to access Google services, add `-e HTTP_PROXY=http://your-proxy:port -e HTTPS_PROXY=http://your-proxy:port` to the Docker command, or add these environment variables to your `docker-compose.yml`.
 
+##### 🛠️ Option 3: Build from Source
+
+If you prefer to build the Docker image yourself, you can use the following commands:
+
+1. Build the image:
+
+   ```bash
+   docker build -t aistudio-to-api .
+   ```
+
+2. Run the container:
+
+   ```bash
+   docker run -d \
+     --name aistudio-to-api \
+     -p 7860:7860 \
+     -v /path/to/auth:/app/configs/auth \
+     -e API_KEYS=your-api-key-1,your-api-key-2 \
+     -e TZ=Asia/Shanghai \
+     --restart unless-stopped \
+     aistudio-to-api
+   ```
+
 #### 🔑 Step 2: Account Management
 
 After deployment, you need to add Google accounts using one of these methods:
@@ -171,8 +195,8 @@ This endpoint is processed and then forwarded to the official Gemini API format 
 This endpoint is forwarded to the official Gemini API format endpoint.
 
 - `GET /v1beta/models`: List available Gemini models.
-- `POST /v1beta/models/{model_name}:generateContent`: Generate content and images.
-- `POST /v1beta/models/{model_name}:streamGenerateContent`: Stream content and image generation, supports real and fake streaming.
+- `POST /v1beta/models/{model_name}:generateContent`: Generate content, images, and speech.
+- `POST /v1beta/models/{model_name}:streamGenerateContent`: Stream content, image, and speech generation, supports real and fake streaming.
 
 > 📖 For detailed API usage examples, see: [API Usage Examples](docs/en/api-examples.md)
 
@@ -196,14 +220,15 @@ This endpoint is forwarded to the official Gemini API format endpoint.
 
 #### 🌐 Proxy Configuration
 
-| Variable                        | Description                                                                                          | Default   |
-| :------------------------------ | :--------------------------------------------------------------------------------------------------- | :-------- |
-| `INITIAL_AUTH_INDEX`            | Initial authentication index to use on startup.                                                      | `0`       |
-| `MAX_RETRIES`                   | Maximum number of retries for failed requests (only effective for fake streaming and non-streaming). | `3`       |
-| `RETRY_DELAY`                   | Delay between retries in milliseconds.                                                               | `2000`    |
-| `SWITCH_ON_USES`                | Number of requests before automatically switching accounts (`0` to disable).                         | `40`      |
-| `FAILURE_THRESHOLD`             | Number of consecutive failures before switching accounts (`0` to disable).                           | `3`       |
-| `IMMEDIATE_SWITCH_STATUS_CODES` | HTTP status codes that trigger immediate account switching (comma-separated).                        | `429,503` |
+| Variable                        | Description                                                                                                                                                                                               | Default   |
+| :------------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------- |
+| `INITIAL_AUTH_INDEX`            | Initial authentication index to use on startup.                                                                                                                                                           | `0`       |
+| `ENABLE_AUTH_UPDATE`            | Whether to enable automatic auth credential updates. Defaults to enabled. The auth file will be automatically updated upon successful login/account switch and every 24 hours. Set to `false` to disable. | `true`    |
+| `MAX_RETRIES`                   | Maximum number of retries for failed requests (only effective for fake streaming and non-streaming).                                                                                                      | `3`       |
+| `RETRY_DELAY`                   | Delay between retries in milliseconds.                                                                                                                                                                    | `2000`    |
+| `SWITCH_ON_USES`                | Number of requests before automatically switching accounts (`0` to disable).                                                                                                                              | `40`      |
+| `FAILURE_THRESHOLD`             | Number of consecutive failures before switching accounts (`0` to disable).                                                                                                                                | `3`       |
+| `IMMEDIATE_SWITCH_STATUS_CODES` | HTTP status codes that trigger immediate account switching (comma-separated).                                                                                                                             | `429,503` |
 
 #### 🗒️ Other Configuration
 
