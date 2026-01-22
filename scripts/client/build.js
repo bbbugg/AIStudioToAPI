@@ -313,13 +313,6 @@ class RequestProcessor {
         return finalUrl;
     }
 
-    _generateRandomString(length) {
-        const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-        let result = "";
-        for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
-        return result;
-    }
-
     _buildRequestConfig(requestSpec, signal) {
         const config = {
             headers: this._sanitizeHeaders(requestSpec.headers),

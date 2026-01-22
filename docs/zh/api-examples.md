@@ -259,3 +259,63 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-preview-tts:ge
 ```
 
 > 💡 **提示**：TTS 响应返回的是 `audio/L16;codec=pcm;rate=24000` 格式的 base64 编码音频数据，需要解码后转换为 WAV 格式播放。
+
+### 📐 文本嵌入 (Embeddings)
+
+使用 `batchEmbedContents` 端点生成文本嵌入向量。
+
+> ⚠️ **注意**：`embedContent` 端点已不再支持，请使用 `batchEmbedContents` 端点。
+
+#### 单个文本嵌入
+
+```bash
+curl -X POST http://localhost:7860/v1beta/models/gemini-embedding-001:batchEmbedContents \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "requests": [
+      {
+        "model": "models/gemini-embedding-001",
+        "content": {
+          "parts": [
+            {
+              "text": "什么是人工智能？"
+            }
+          ]
+        }
+      }
+    ]
+  }'
+```
+
+#### 批量文本嵌入
+
+```bash
+curl -X POST http://localhost:7860/v1beta/models/gemini-embedding-001:batchEmbedContents \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "requests": [
+      {
+        "model": "models/gemini-embedding-001",
+        "content": {
+          "parts": [
+            {
+              "text": "什么是人工智能？"
+            }
+          ]
+        }
+      },
+      {
+        "model": "models/gemini-embedding-001",
+        "content": {
+          "parts": [
+            {
+              "text": "机器学习和深度学习有什么区别？"
+            }
+          ]
+        }
+      }
+    ]
+  }'
+```
