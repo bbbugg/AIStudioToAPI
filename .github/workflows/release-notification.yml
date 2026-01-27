@@ -1,8 +1,12 @@
 name: Release Notification
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g., v0.1.0)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,7 +26,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = context.ref.replace('refs/tags/', '');
+            const tag = context.payload.inputs.tag;
             const { owner, repo } = context.repo;
             const releaseUrl = `https://github.com/${owner}/${repo}/releases/tag/${tag}`;
 
@@ -34,7 +38,7 @@ jobs:
               // Sort by version number descending
               const { stdout } = await exec.getExecOutput('git', ['tag', '--list', 'v*', '--sort=-v:refname']);
               const tags = stdout.trim().split('\n').filter(Boolean);
-              
+
               const currentIndex = tags.indexOf(tag);
               if (currentIndex !== -1 && currentIndex < tags.length - 1) {
                 prevTag = tags[currentIndex + 1];
@@ -115,14 +119,14 @@ jobs:
                   let match;
                   // Reset regex index (good practice)
                   issueRegex.lastIndex = 0;
-                  
+
                   while ((match = issueRegex.exec(pr.body)) !== null) {
                     // match[1] is number from #123, match[2] is number from link
                     issuesToNotify.add(match[1] || match[2]);
                   }
 
                   const issueCommentBody = `✅ 此 Issue 已在版本 [${tag}](${releaseUrl}) 中修复 (通过 PR #${prNumber})。\n✅ This Issue has been fixed in version [${tag}](${releaseUrl}) (via PR #${prNumber}).`;
-                  
+
                   for (const issueId of issuesToNotify) {
                     try {
                       await github.rest.issues.createComment({

@@ -2,8 +2,7 @@
  * File: src/core/RequestHandler.js
  * Description: Main request handler that processes API requests, manages retries, and coordinates between authentication and format conversion
  *
- * Maintainers: iBenzene, bbbugg
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg
  */
 
 /**
@@ -962,6 +961,17 @@ class RequestHandler {
                 }
 
                 lastError = errorPayload;
+
+                // Check if we should stop retrying immediately based on status code
+                if (
+                    this.config.immediateSwitchStatusCodes &&
+                    this.config.immediateSwitchStatusCodes.includes(errorPayload.status)
+                ) {
+                    this.logger.warn(
+                        `[Request] Critical error ${errorPayload.status} detected (${errorPayload.message}), aborting retries immediately.`
+                    );
+                    break;
+                }
 
                 // Log the warning for the current attempt
                 this.logger.warn(

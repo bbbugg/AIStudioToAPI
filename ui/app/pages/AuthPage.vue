@@ -2,8 +2,7 @@
  * File: ui/app/pages/AuthPage.vue
  * Description: VNC-based authentication page for adding new Google AI Studio accounts
  *
- * Maintainers: iBenzene, bbbugg
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg
 -->
 
 <template>
@@ -247,6 +246,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import I18n from "../utils/i18n";
+import { useTheme } from "../utils/useTheme";
 
 const hasInitialized = ref(false);
 const isConnected = ref(false);
@@ -262,6 +262,9 @@ const statusTitle = ref("");
 const statusTone = ref("info");
 const textInput = ref("");
 const textInputRef = ref(null);
+
+// Initialize theme
+useTheme();
 
 const t = key => {
     langVersion.value; // Access to track language changes

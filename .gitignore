@@ -22,7 +22,10 @@ camoufox*.zip
 
 # Authentication files
 configs/auth/
+auth-*.json
 
 # Temporary files
 tmp/
 ui/dist/
+*.css
+test/

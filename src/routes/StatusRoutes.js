@@ -2,8 +2,7 @@
  * File: src/routes/StatusRoutes.js
  * Description: Status and system management routes
  *
- * Maintainers: iBenzene, bbbugg
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg
  */
 
 const fs = require("fs");
@@ -255,7 +254,7 @@ class StatusRoutes {
 
             const { authSource } = this.serverSystem;
 
-            if (!authSource.availableIndices.includes(targetIndex)) {
+            if (!authSource.initialIndices.includes(targetIndex)) {
                 return res.status(404).json({ index: targetIndex, message: "errorAccountNotFound" });
             }
 
@@ -351,6 +350,19 @@ class StatusRoutes {
             });
         });
 
+        app.put("/api/settings/log-max-count", isAuthenticated, (req, res) => {
+            const { count } = req.body;
+            const newCount = parseInt(count, 10);
+
+            if (!isNaN(newCount) && newCount > 0) {
+                this.logger.setDisplayLimit(newCount);
+                this.logger.info(`[WebUI] Log display limit updated to: ${newCount}`);
+                res.status(200).json({ message: "settingUpdateSuccess", setting: "logMaxCount", value: newCount });
+            } else {
+                res.status(400).json({ error: "Invalid count", message: "settingFailed" });
+            }
+        });
+
         app.post("/api/files", isAuthenticated, (req, res) => {
             const { content } = req.body;
             // Ignore req.body.filename - auto rename
@@ -425,7 +437,9 @@ class StatusRoutes {
         const invalidIndices = initialIndices.filter(i => !authSource.availableIndices.includes(i));
         const rotationIndices = authSource.getRotationIndices();
         const duplicateIndices = authSource.duplicateIndices || [];
-        const logs = this.logger.logBuffer || [];
+        const limit = this.logger.displayLimit || 100;
+        const allLogs = this.logger.logBuffer || [];
+        const displayLogs = allLogs.slice(-limit);
         const accountNameMap = authSource.accountNameMap;
         const accountDetails = initialIndices.map(index => {
             const isInvalid = invalidIndices.includes(index);
@@ -452,8 +466,8 @@ class StatusRoutes {
                 : requestHandler.failureCount;
 
         return {
-            logCount: logs.length,
-            logs: logs.join("\n"),
+            logCount: displayLogs.length,
+            logs: displayLogs.join("\n"),
             status: {
                 accountDetails,
                 apiKeySource: config.apiKeySource,
@@ -473,6 +487,7 @@ class StatusRoutes {
                 initialIndicesRaw: initialIndices,
                 invalidIndicesRaw: invalidIndices,
                 isSystemBusy: requestHandler.isSystemBusy,
+                logMaxCount: limit,
                 rotationIndicesRaw: rotationIndices,
                 streamingMode: this.serverSystem.streamingMode,
                 usageCount,

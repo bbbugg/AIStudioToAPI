@@ -2,8 +2,7 @@
  * File: src/core/BrowserManager.js
  * Description: Browser manager for launching and controlling headless Firefox instances with authentication contexts
  *
- * Maintainers: iBenzene, bbbugg, 挈挈
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg, 挈挈
  */
 
 const fs = require("fs");
@@ -253,7 +252,7 @@ class BrowserManager {
                 const destY = i === steps ? targetY : intermediateY;
 
                 await page.mouse.move(destX, destY, {
-                    steps: 10 + Math.floor(Math.random() * 10), // Random speed
+                    steps: 5 + Math.floor(Math.random() * 5), // Optimized speed (was 10-20)
                 });
             }
         } catch (e) {
@@ -324,24 +323,27 @@ class BrowserManager {
 
             try {
                 // 1. Keep-Alive: Random micro-actions (30% chance)
-                if (Math.random() > 0.3) {
+                if (Math.random() < 0.3) {
                     try {
+                        // Optimized randomness based on viewport
+                        const vp = page.viewportSize() || { height: 1080, width: 1920 };
+
                         // Scroll
                         // eslint-disable-next-line no-undef
                         await page.evaluate(() => window.scrollBy(0, (Math.random() - 0.5) * 20));
-                        // Mouse jitter
-                        const x = Math.floor(Math.random() * 500);
-                        const y = Math.floor(Math.random() * 500);
-                        await page.mouse.move(x, y, { steps: 5 });
+                        // Human-like mouse jitter
+                        const x = Math.floor(Math.random() * (vp.width * 0.8));
+                        const y = Math.floor(Math.random() * (vp.height * 0.8));
+                        await this._simulateHumanMovement(page, x, y);
                     } catch (e) {
                         /* empty */
                     }
                 }
 
-                // 2. Anti-Timeout: Click (1,1) every ~1 minute (15 ticks)
+                // 2. Anti-Timeout: Click top-left corner (1,1) every ~1 minute (15 ticks)
                 if (tickCount % 15 === 0) {
                     try {
-                        await page.mouse.move(1, 1, { steps: 5 });
+                        await this._simulateHumanMovement(page, 1, 1);
                         await page.mouse.down();
                         await page.waitForTimeout(100 + Math.random() * 100);
                         await page.mouse.up();
@@ -404,6 +406,29 @@ class BrowserManager {
     }
 
     /**
+     * Helper: Save debug information (screenshot and HTML) to root directory
+     */
+    async _saveDebugArtifacts(suffix = "final") {
+        if (!this.page || this.page.isClosed()) return;
+        try {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-").substring(0, 19);
+            const screenshotPath = path.join(process.cwd(), `debug_screenshot_${suffix}_${timestamp}.png`);
+            await this.page.screenshot({
+                fullPage: true,
+                path: screenshotPath,
+            });
+            this.logger.info(`[Debug] Failure screenshot saved to: ${screenshotPath}`);
+
+            const htmlPath = path.join(process.cwd(), `debug_page_source_${suffix}_${timestamp}.html`);
+            const htmlContent = await this.page.content();
+            fs.writeFileSync(htmlPath, htmlContent);
+            this.logger.info(`[Debug] Failure page source saved to: ${htmlPath}`);
+        } catch (e) {
+            this.logger.error(`[Debug] Failed to save debug artifacts: ${e.message}`);
+        }
+    }
+
+    /**
      * Feature: Background Wakeup & "Launch" Button Handler
      * Specifically handles the "Rocket/Launch" button which blocks model loading.
      */
@@ -422,8 +447,10 @@ class BrowserManager {
                 await currentPage.bringToFront().catch(() => {});
 
                 // Micro-movements to trigger rendering frames in headless mode
-                await currentPage.mouse.move(10, 10);
-                await currentPage.mouse.move(20, 20);
+                const vp = currentPage.viewportSize() || { height: 1080, width: 1920 };
+                const moveX = Math.floor(Math.random() * (vp.width * 0.3));
+                const moveY = Math.floor(Math.random() * (vp.height * 0.3));
+                await this._simulateHumanMovement(currentPage, moveX, moveY);
 
                 // 2. Intelligent Scan for "Launch" or "Rocket" button
                 const targetInfo = await currentPage.evaluate(() => {
@@ -762,7 +789,11 @@ class BrowserManager {
                 await this.page.bringToFront();
                 // eslint-disable-next-line no-undef
                 await this.page.evaluate(() => window.focus());
-                await this._simulateHumanMovement(this.page, 10, 10);
+                // Get viewport size for realistic movement range
+                const vp = this.page.viewportSize() || { height: 1080, width: 1920 };
+                const startX = Math.floor(Math.random() * (vp.width * 0.5));
+                const startY = Math.floor(Math.random() * (vp.height * 0.5));
+                await this._simulateHumanMovement(this.page, startX, startY);
                 await this.page.mouse.down();
                 await this.page.waitForTimeout(100);
                 await this.page.mouse.up();
@@ -791,14 +822,24 @@ class BrowserManager {
             // Wake up window using JS and Human Movement
             try {
                 await this.page.bringToFront();
-                await this._simulateHumanMovement(this.page, 10, 10); // Move to safe corner
+
+                // Get viewport size for realistic movement range
+                const vp = this.page.viewportSize() || { height: 1080, width: 1920 };
+
+                // 1. Move to a random point to simulate activity
+                const randomX = Math.floor(Math.random() * (vp.width * 0.7));
+                const randomY = Math.floor(Math.random() * (vp.height * 0.7));
+                await this._simulateHumanMovement(this.page, randomX, randomY);
+
+                // 2. Move to (1,1) specifically for a safe click, using human simulation
+                await this._simulateHumanMovement(this.page, 1, 1);
                 await this.page.mouse.down();
-                await this.page.waitForTimeout(50 + Math.random() * 150);
+                await this.page.waitForTimeout(50 + Math.random() * 100);
                 await this.page.mouse.up();
-                await this._simulateHumanMovement(this.page, 100, 100);
-                this.logger.info("[Browser] ✅ Executed human-like page activation (path + click).");
+
+                this.logger.info(`[Browser] ✅ Executed realistic page activation (Random -> 1,1 Click).`);
             } catch (e) {
-                /* Ignore wakeup errors */
+                this.logger.warn(`[Browser] Wakeup minor error: ${e.message}`);
             }
             await this.page.waitForTimeout(2000 + Math.random() * 2000);
 
@@ -841,39 +882,97 @@ class BrowserManager {
                 throw new Error("🚨 Page load failed (about:blank), possibly network timeout or browser crash.");
             }
 
-            // Handle various popups
-            this.logger.info(`[Browser] Checking for Cookie consent banner...`);
-            try {
-                const agreeButton = this.page.locator('button:text("Agree")');
-                if (await agreeButton.isVisible({ timeout: 5000 })) {
-                    await this.page.waitForTimeout(500 + Math.random() * 1000);
-                    this.logger.info(`[Browser] ✅ Found Cookie consent banner, clicking "Agree"...`);
-                    await agreeButton.click({ force: true });
+            // Handle various popups with intelligent detection
+            // Use short polling instead of long hard-coded timeouts
+            this.logger.info(`[Browser] 🔍 Starting intelligent popup detection (max 6s)...`);
+
+            const popupConfigs = [
+                {
+                    logFound: `[Browser] ✅ Found Cookie consent banner, clicking "Agree"...`,
+                    name: "Cookie consent",
+                    selector: 'button:text("Agree")',
+                },
+                {
+                    logFound: `[Browser] ✅ Found "Got it" popup, clicking...`,
+                    name: "Got it dialog",
+                    selector: 'div.dialog button:text("Got it")',
+                },
+                {
+                    logFound: `[Browser] ✅ Found onboarding tutorial popup, clicking close button...`,
+                    name: "Onboarding tutorial",
+                    selector: 'button[aria-label="Close"]',
+                },
+            ];
+
+            // Polling-based detection with smart exit conditions
+            // - Initial wait: give popups time to render after page load
+            // - Consecutive idle tracking: exit after N consecutive iterations with no new popups
+            const maxIterations = 12; // Max polling iterations
+            const pollInterval = 500; // Interval between polls (ms)
+            const minIterations = 6; // Min iterations (3s), ensure slow popups have time to load
+            const idleThreshold = 4; // Exit after N consecutive iterations with no new popups
+            const handledPopups = new Set();
+            let consecutiveIdleCount = 0; // Counter for consecutive idle iterations
+
+            for (let i = 0; i < maxIterations; i++) {
+                let foundAny = false;
+
+                for (const popup of popupConfigs) {
+                    if (handledPopups.has(popup.name)) continue;
+
+                    try {
+                        const element = this.page.locator(popup.selector).first();
+                        // Quick visibility check with very short timeout
+                        if (await element.isVisible({ timeout: 200 })) {
+                            this.logger.info(popup.logFound);
+                            await element.click({ force: true });
+                            handledPopups.add(popup.name);
+                            foundAny = true;
+                            // Short pause after clicking to let next popup appear
+                            await this.page.waitForTimeout(800);
+                        }
+                    } catch (error) {
+                        // Element not visible or doesn't exist is expected here,
+                        // but propagate clearly critical browser/page issues.
+                        if (error && error.message) {
+                            const msg = error.message;
+                            if (
+                                msg.includes("Execution context was destroyed") ||
+                                msg.includes("Target page, context or browser has been closed") ||
+                                msg.includes("Protocol error") ||
+                                msg.includes("Navigation failed because page was closed")
+                            ) {
+                                throw error;
+                            }
+                            if (this.logger && typeof this.logger.debug === "function") {
+                                this.logger.debug(
+                                    `[Browser] Ignored error while checking popup "${popup.name}": ${msg}`
+                                );
+                            }
+                        }
+                    }
                 }
-            } catch (error) {
-                this.logger.info(`[Browser] No Cookie consent banner found, skipping.`);
-            }
 
-            this.logger.info(`[Browser] Checking for "Got it" popup...`);
-            try {
-                const gotItButton = this.page.locator('div.dialog button:text("Got it")');
-                await gotItButton.waitFor({ state: "visible", timeout: 15000 });
-                this.logger.info(`[Browser] ✅ Found "Got it" popup, clicking...`);
-                await gotItButton.click({ force: true });
-                await this.page.waitForTimeout(1000);
-            } catch (error) {
-                this.logger.info(`[Browser] No "Got it" popup found, skipping.`);
-            }
+                // Update consecutive idle counter
+                if (foundAny) {
+                    consecutiveIdleCount = 0; // Found popup, reset counter
+                } else {
+                    consecutiveIdleCount++;
+                }
 
-            this.logger.info(`[Browser] Checking for onboarding tutorial...`);
-            try {
-                const closeButton = this.page.locator('button[aria-label="Close"]');
-                await closeButton.waitFor({ state: "visible", timeout: 15000 });
-                this.logger.info(`[Browser] ✅ Found onboarding tutorial popup, clicking close button...`);
-                await closeButton.click({ force: true });
-                await this.page.waitForTimeout(1000);
-            } catch (error) {
-                this.logger.info(`[Browser] No "It's time to build" onboarding tutorial found, skipping.`);
+                // Exit conditions:
+                // 1. Must have completed minimum iterations (ensure slow popups have time to load)
+                // 2. Consecutive idle count exceeds threshold (no new popups appearing)
+                if (i >= minIterations - 1 && consecutiveIdleCount >= idleThreshold) {
+                    this.logger.info(
+                        `[Browser] ✅ Popup detection complete (${i + 1} iterations, ${handledPopups.size} popups handled)`
+                    );
+                    break;
+                }
+
+                if (i < maxIterations - 1) {
+                    await this.page.waitForTimeout(pollInterval);
+                }
             }
 
             this.logger.info("[Browser] Preparing UI interaction, forcefully removing all possible overlay layers...");
@@ -906,16 +1005,6 @@ class BrowserManager {
                 } catch (error) {
                     this.logger.warn(`  [Attempt ${i}/5] Click failed: ${error.message.split("\n")[0]}`);
                     if (i === 5) {
-                        try {
-                            const screenshotPath = path.join(process.cwd(), "debug_screenshot_final.png");
-                            await this.page.screenshot({
-                                fullPage: true,
-                                path: screenshotPath,
-                            });
-                            this.logger.info(`[Debug] Final failure screenshot saved to: ${screenshotPath}`);
-                        } catch (screenshotError) {
-                            this.logger.error(`[Debug] Failed to save screenshot: ${screenshotError.message}`);
-                        }
                         throw new Error(
                             `Unable to click "Code" button after multiple attempts, initialization failed.`
                         );
@@ -992,6 +1081,8 @@ class BrowserManager {
             this.logger.info("==================================================");
         } catch (error) {
             this.logger.error(`❌ [Browser] Account ${authIndex} context initialization failed: ${error.message}`);
+            // Save debug info before closing browser
+            await this._saveDebugArtifacts("init_failed");
             await this.closeBrowser();
             this._currentAuthIndex = -1;
             throw error;

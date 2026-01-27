@@ -2,8 +2,7 @@
  * File: ui/app/pages/LoginPage.vue
  * Description: Login page component for user authentication with internationalization support
  *
- * Maintainers: iBenzene, bbbugg
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg
 -->
 
 <template>
@@ -53,6 +52,7 @@
 import { computed, onMounted, ref, watchEffect } from "vue";
 import { useRoute } from "vue-router";
 import I18n from "../utils/i18n";
+import { useTheme } from "../utils/useTheme";
 
 const route = useRoute();
 
@@ -63,6 +63,9 @@ const langVersion = ref(0);
 const onLangChange = () => {
     langVersion.value++;
 };
+
+// Initialize theme
+useTheme();
 
 onMounted(() => {
     I18n.onChange(onLangChange);

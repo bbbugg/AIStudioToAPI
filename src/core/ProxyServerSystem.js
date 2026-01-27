@@ -2,8 +2,7 @@
  * File: src/core/ProxyServerSystem.js
  * Description: Main proxy server system that orchestrates all components including HTTP/WebSocket servers, authentication, and request handling
  *
- * Maintainers: iBenzene, bbbugg
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg
  */
 
 const { EventEmitter } = require("events");
@@ -128,32 +127,56 @@ class ProxyServerSystem extends EventEmitter {
         return (req, res, next) => {
             // Whitelist paths that don't require API key authentication
             // Note: /, /api/status use session authentication instead
-            const whitelistPaths = [
-                "/",
-                "/favicon.ico",
-                "/login",
-                "/health",
-                "/api/status",
-                "/api/accounts/current",
-                "/api/accounts/deduplicate",
-                "/api/settings/streaming-mode",
-                "/api/settings/force-thinking",
-                "/api/settings/force-web-search",
-                "/api/settings/force-url-context",
-                "/auth",
+            // Whitelist paths that don't require API key authentication (Method specific)
+            // Note: /, /api/status use session authentication instead
+            const whitelistRules = [
+                { methods: ["GET", "POST"], path: "/" }, // POST is 405 but handled
+                { methods: ["GET"], path: "/favicon.ico" },
+                { methods: ["GET", "POST"], path: "/login" },
+                { methods: ["GET"], path: "/health" },
+                { methods: ["GET"], path: "/api/status" },
+                { methods: ["GET"], path: "/api/version/check" },
+                { methods: ["PUT"], path: "/api/accounts/current" },
+                { methods: ["POST"], path: "/api/accounts/deduplicate" },
+                { methods: ["PUT"], path: "/api/settings/streaming-mode" },
+                { methods: ["PUT"], path: "/api/settings/force-thinking" },
+                { methods: ["PUT"], path: "/api/settings/force-web-search" },
+                { methods: ["PUT"], path: "/api/settings/force-url-context" },
+                { methods: ["PUT"], path: "/api/settings/debug-mode" },
+                { methods: ["PUT"], path: "/api/settings/log-max-count" },
+                { methods: ["GET"], path: "/auth" },
+                // VNC Routes must be accessible for authenticated sessions (which bypass key check via session check below),
+                // but checking here explicitely is safer
+                { methods: ["POST", "DELETE"], path: "/api/vnc/sessions" },
+                { methods: ["POST"], path: "/api/vnc/auth" },
+                { methods: ["POST"], path: "/api/files" },
             ];
 
-            // Whitelist path patterns (regex)
+            // Whitelist path patterns (regex) with allowed methods
             const whitelistPatterns = [
-                /^\/api\/accounts\/\d+$/, // Matches /api/accounts/:index for DELETE operations
+                { methods: ["DELETE"], pattern: /^\/api\/accounts\/\d+$/ }, // Matches /api/accounts/:index for DELETE operations
+                { methods: ["GET"], pattern: /^\/api\/files\/[a-zA-Z0-9.-]+$/ },
             ];
 
-            // Skip authentication for static files
+            // strict method check for static files
             const staticPrefixes = ["/assests/", "/assets/", "/AIStudio_logo.svg", "/AIStudio_icon.svg", "/locales/"];
-            const isStaticFile = staticPrefixes.some(prefix => req.path.startsWith(prefix) || req.path === prefix);
-            const isWhitelistedPattern = whitelistPatterns.some(pattern => pattern.test(req.path));
+            const isStaticFile =
+                req.method === "GET" &&
+                staticPrefixes.some(prefix => req.path.startsWith(prefix) || req.path === prefix);
 
-            if (whitelistPaths.includes(req.path) || isStaticFile || isWhitelistedPattern) {
+            // Check exact path match
+            const matchedRule = whitelistRules.find(rule => rule.path === req.path);
+            if (matchedRule && matchedRule.methods.includes(req.method)) {
+                return next();
+            }
+
+            // Check pattern match
+            const matchedPattern = whitelistPatterns.find(rule => rule.pattern.test(req.path));
+            if (matchedPattern && matchedPattern.methods.includes(req.method)) {
+                return next();
+            }
+
+            if (isStaticFile) {
                 return next();
             }
 

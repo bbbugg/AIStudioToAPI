@@ -2,8 +2,7 @@
  * File: src/core/FormatConverter.js
  * Description: Format converter that translates between OpenAI and Google Gemini API request/response formats
  *
- * Maintainers: iBenzene, bbbugg
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg
  */
 
 const axios = require("axios");
@@ -515,11 +514,19 @@ class FormatConverter {
             for (const key of Object.keys(obj)) {
                 // 1. Filter out unsupported fields using a blacklist approach
                 // This allows potentially valid fields to pass through while blocking known problematic ones
-                const unsupportedKeys = ["$schema", "additionalProperties"];
+                const unsupportedKeys = [
+                    "$schema",
+                    "additionalProperties",
+                    "ref",
+                    "$ref",
+                    "propertyNames",
+                    "patternProperties",
+                    "unevaluatedProperties",
+                ];
 
                 if (isResponseSchema) {
                     // For Structured Outputs: stricter filtering of metadata that causes 400 errors
-                    unsupportedKeys.push("title", "default", "examples", "$defs", "id", "patternProperties");
+                    unsupportedKeys.push("title", "default", "examples", "$defs", "id");
                 }
 
                 if (unsupportedKeys.includes(key)) {

@@ -2,8 +2,7 @@
  * File: src/routes/AuthRoutes.js
  * Description: Authentication routes for login and logout functionality
  *
- * Maintainers: iBenzene, bbbugg
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg
  */
 
 const CreateAuth = require("../auth/CreateAuth");
@@ -85,7 +84,14 @@ class AuthRoutes {
         if (req.session.isAuthenticated) {
             return next();
         }
-        res.redirect("/login");
+
+        // Use 303 See Other to force the browser to use GET for the redirect
+        // This solves the issue where DELETE/POST requests would otherwise be redirected as DELETE/POST /login
+        if (req.xhr || req.headers.accept?.includes("application/json")) {
+            return res.status(401).json({ message: "unlimited" });
+        }
+
+        res.redirect(303, "/login");
     }
 
     /**

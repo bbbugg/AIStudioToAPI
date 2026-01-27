@@ -2,8 +2,7 @@
  * File: src/auth/CreateAuth.js
  * Description: Authentication creation handler for VNC-based auth generation
  *
- * Maintainers: iBenzene, bbbugg
- * Original Author: Ellinav
+ * Author: Ellinav, iBenzene, bbbugg
  */
 
 const fs = require("fs");
@@ -21,23 +20,102 @@ class CreateAuth {
         this.logger = serverSystem.logger;
         this.config = serverSystem.config;
         this.vncSession = null;
-        this.isVncOperationInProgress = false; // Mutex for VNC operations
+        this.currentLockToken = null; // Token to identify who holds the lock
+        this.currentVncAbortController = null; // Controller to abort ongoing setup
     }
 
-    _waitForPort(port, timeout = 5000) {
+    /**
+     * Helper: Run a promise but reject immediately if the signal is aborted.
+     * Ensures we don't block on long operations (like browser launch/nav) if a new request comes in.
+     */
+    async _runWithSignal(promise, signal) {
+        if (signal?.aborted) throw new Error("VNC_SETUP_ABORTED");
+        if (!signal) return promise;
+
+        return new Promise((resolve, reject) => {
+            const onAbort = () => {
+                signal.removeEventListener("abort", onAbort);
+                reject(new Error("VNC_SETUP_ABORTED"));
+            };
+
+            signal.addEventListener("abort", onAbort);
+
+            promise.then(
+                val => {
+                    signal.removeEventListener("abort", onAbort);
+                    if (signal.aborted) {
+                        // ZOMBIE CLEANUP: The operation succeeded but we already moved on.
+                        // If the result contains a browser instance, kill it.
+                        if (val && val.browser) {
+                            this.logger.warn("[VNC] 🧟 Zombie browser instance detected after abort. Killing it...");
+                            val.browser.close().catch(() => {});
+                        }
+                    } else {
+                        resolve(val);
+                    }
+                },
+                err => {
+                    signal.removeEventListener("abort", onAbort);
+                    if (!signal.aborted) {
+                        reject(err);
+                    }
+                    // If aborted, we ignore the error of the abandoned promise
+                }
+            );
+        });
+    }
+
+    _waitForPort(port, timeout = 5000, signal = null) {
         return new Promise((resolve, reject) => {
             const startTime = Date.now();
+            let timerHandle = null;
+            let socket = null;
+
+            const cleanup = () => {
+                if (timerHandle) {
+                    clearTimeout(timerHandle);
+                    timerHandle = null;
+                }
+                if (socket) {
+                    socket.destroy();
+                    socket = null;
+                }
+                if (signal) {
+                    signal.removeEventListener("abort", onAbort);
+                }
+            };
+
+            const onAbort = () => {
+                cleanup();
+                reject(new Error("VNC_SETUP_ABORTED"));
+            };
+
+            if (signal) {
+                if (signal.aborted) return onAbort();
+                signal.addEventListener("abort", onAbort);
+            }
+
             const tryConnect = () => {
-                const socket = new net.Socket();
-                socket.on("connect", () => {
-                    socket.end();
-                    resolve();
+                if (signal?.aborted) return;
+
+                socket = new net.Socket();
+                socket.once("connect", () => {
+                    cleanup(); // Success! Clean up listeners/timers/sockets
+                    resolve(); // Resolve with nothing (void)
                 });
-                socket.on("error", () => {
+
+                socket.once("error", () => {
+                    // Socket failed, destroy it immediately
+                    socket.destroy();
+                    socket = null;
+
+                    if (signal?.aborted) return;
+
                     if (Date.now() - startTime > timeout) {
+                        cleanup();
                         reject(new Error(`Timeout waiting for port ${port}`));
                     } else {
-                        setTimeout(tryConnect, 100);
+                        timerHandle = setTimeout(tryConnect, 100);
                     }
                 });
                 socket.connect(port, "localhost");
@@ -52,18 +130,65 @@ class CreateAuth {
             return res.status(501).json({ message: "errorVncUnsupportedOs" });
         }
 
-        if (this.isVncOperationInProgress) {
-            this.logger.warn("[VNC] A VNC operation is already in progress. Please wait.");
-            return res.status(429).json({ message: "errorVncInProgress" });
+        // --- Concurrency Handling with Token Ownership ---
+        const myToken = {}; // Unique object identity
+
+        if (this.currentLockToken) {
+            this.logger.warn("[VNC] A VNC operation is already in progress. Signal interruption...");
+
+            if (this.currentVncAbortController) {
+                this.currentVncAbortController.abort();
+            }
+
+            // Wait for the previous operation to clean up and release the lock
+            const waitStart = Date.now();
+            while (this.currentLockToken) {
+                // If another session managed to start while we were waiting, abort it too.
+                // This ensures the latest request always wins and doesn't queue up behind others.
+                if (this.currentVncAbortController) {
+                    this.currentVncAbortController.abort();
+                }
+
+                if (Date.now() - waitStart > 6000) {
+                    // Maximum wait 6s (covers 2s cleanup + overhead)
+                    this.logger.error("[VNC] Timeout waiting for previous session to abort.");
+                    return res.status(503).json({ message: "errorVncBusyTimeout" });
+                }
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            this.logger.info("[VNC] Lock acquired after previous session cleanup.");
+
+            // CAS (Compare-And-Swap) Check:
+            if (this.currentLockToken) {
+                this.logger.warn("[VNC] Queue race detected: Lock stolen by another request. Aborting execution.");
+                return res.status(503).json({ message: "errorVncBusyPreempted" });
+            }
         }
 
-        this.isVncOperationInProgress = true;
+        this.currentLockToken = myToken;
+        this.currentVncAbortController = new AbortController();
+        const { signal } = this.currentVncAbortController;
+
+        const checkAborted = () => {
+            if (signal.aborted) {
+                throw new Error("VNC_SETUP_ABORTED");
+            }
+        };
+
+        const sessionResources = {};
 
         try {
+            // Check immediately
+            checkAborted();
+
             // Always clean up any existing session before starting a new one
-            await this._cleanupVncSession("new_session_request");
+            // Pass global clean up false, we want to clean whatever is current
+            await this._cleanupVncSession("new_session_request", this.vncSession);
+            checkAborted();
+
             // Add a small delay to ensure OS releases ports
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await this._runWithSignal(new Promise(resolve => setTimeout(resolve, 200)), signal);
+            checkAborted();
 
             const userAgent = req.headers["user-agent"] || "";
             const isMobile = /Mobi|Android/i.test(userAgent);
@@ -82,9 +207,8 @@ class CreateAuth {
             const websockifyPort = 6080;
             const display = ":99";
 
-            const sessionResources = {};
-
-            const cleanup = reason => this._cleanupVncSession(reason);
+            // Define a scoped cleanup for this specific session instance
+            const scopedCleanup = reason => this._cleanupVncSession(reason, sessionResources);
 
             this.logger.info(
                 `[VNC] Starting virtual screen (Xvfb) on display ${display} with resolution ${screenResolution}...`
@@ -107,12 +231,13 @@ class CreateAuth {
             });
             xvfb.once("close", code => {
                 this.logger.warn(`[VNC:Xvfb] Process exited with code ${code}. Triggering cleanup.`);
-                cleanup("xvfb_closed");
+                scopedCleanup("xvfb_closed");
             });
             sessionResources.xvfb = xvfb;
 
             // Wait for Xvfb to be ready
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await this._runWithSignal(new Promise(resolve => setTimeout(resolve, 500)), signal);
+            checkAborted();
 
             this.logger.info(`[VNC] Starting VNC server (x11vnc) on port ${vncPort}...`);
             const x11vnc = spawn("x11vnc", [
@@ -148,12 +273,13 @@ class CreateAuth {
             });
             x11vnc.once("close", code => {
                 this.logger.warn(`[VNC:x11vnc] Process exited with code ${code}. Triggering cleanup.`);
-                cleanup("x11vnc_closed");
+                scopedCleanup("x11vnc_closed");
             });
             sessionResources.x11vnc = x11vnc;
 
-            await this._waitForPort(vncPort);
+            await this._waitForPort(vncPort, 5000, signal);
             this.logger.info("[VNC] VNC server is ready.");
+            checkAborted();
 
             this.logger.info(`[VNC] Starting websockify on port ${websockifyPort}...`);
             const websockify = spawn("websockify", [String(websockifyPort), `localhost:${vncPort}`]);
@@ -197,32 +323,42 @@ class CreateAuth {
             });
             websockify.once("close", code => {
                 this.logger.warn(`[VNC:Proxy] Process exited with code ${code}. Triggering cleanup.`);
-                cleanup("websockify_closed");
+                scopedCleanup("websockify_closed");
             });
             sessionResources.websockify = websockify;
 
-            await this._waitForPort(websockifyPort);
+            await this._waitForPort(websockifyPort, 5000, signal);
             this.logger.info("[VNC] Websockify is ready.");
+            checkAborted();
 
             this.logger.info("[VNC] Launching browser for VNC session...");
-            const { browser, context } = await this.serverSystem.browserManager.launchBrowserForVNC({
-                env: { DISPLAY: display },
-                isMobile,
-            });
+            const { browser, context } = await this._runWithSignal(
+                this.serverSystem.browserManager.launchBrowserForVNC({
+                    env: { DISPLAY: display },
+                    isMobile,
+                }),
+                signal
+            );
             sessionResources.browser = browser;
             sessionResources.context = context;
 
             browser.once("disconnected", () => {
                 this.logger.warn("[VNC] Browser disconnected. Triggering cleanup.");
-                cleanup("browser_disconnected");
+                scopedCleanup("browser_disconnected");
             });
 
-            const page = await context.newPage();
+            // Double check before heavy page load
+            checkAborted();
 
-            await page.setViewportSize({
-                height: screenHeight,
-                width: screenWidth,
-            });
+            const page = await this._runWithSignal(context.newPage(), signal);
+
+            await this._runWithSignal(
+                page.setViewportSize({
+                    height: screenHeight,
+                    width: screenWidth,
+                }),
+                signal
+            );
 
             await page.addInitScript(`
                 (function() {
@@ -242,16 +378,31 @@ class CreateAuth {
                 })();
             `);
 
-            await page.goto("https://aistudio.google.com/", {
-                timeout: 120000,
-                waitUntil: "domcontentloaded",
-            });
+            await this._runWithSignal(
+                page
+                    .goto("https://aistudio.google.com/", {
+                        timeout: 120000,
+                        waitUntil: "domcontentloaded",
+                    })
+                    .catch(e => {
+                        // Swallow "Target closed" error if it happens during abort/cleanup
+                        if (
+                            e.message.includes("closed") ||
+                            e.message.includes("Target page, context or browser has been closed")
+                        ) {
+                            return null;
+                        }
+                        throw e;
+                    }),
+                signal
+            );
             sessionResources.page = page;
+            checkAborted();
 
             sessionResources.timeoutHandle = setTimeout(
                 () => {
                     this.logger.warn("[VNC] Session has been idle for 10 minutes. Automatically cleaning up.");
-                    cleanup("idle_timeout");
+                    scopedCleanup("idle_timeout");
                 },
                 10 * 60 * 1000
             );
@@ -261,11 +412,32 @@ class CreateAuth {
             this.logger.info(`[VNC] VNC session is live and accessible via the server's WebSocket proxy.`);
             res.json({ protocol: "websocket", success: true });
         } catch (error) {
-            this.logger.error(`[VNC] Failed to start VNC session: ${error.message}`);
-            await this._cleanupVncSession("startup_error");
-            res.status(500).json({ message: "errorVncStartFailed" });
+            if (error.message === "VNC_SETUP_ABORTED") {
+                this.logger.warn("[VNC] Current session setup aborted by new incoming request.");
+                // We pass sessionResources (if any) to ensure we clean what we started,
+                // though usually vncSession is assigned late.
+                // If we assigned vncSession, cleanup will handle it.
+                await this._cleanupVncSession("setup_aborted", sessionResources);
+
+                if (!res.headersSent) {
+                    res.status(499).json({ message: "errorVncSetupAborted" }); // 499 Client Closed Request (Nginx style) or just 503
+                }
+            } else {
+                this.logger.error(`[VNC] Failed to start VNC session: ${error.message}`);
+                await this._cleanupVncSession("startup_error", sessionResources);
+                if (!res.headersSent) {
+                    res.status(500).json({ message: "errorVncStartFailed" });
+                }
+            }
         } finally {
-            this.isVncOperationInProgress = false;
+            // Only release lock if *this* instance holds it.
+            if (this.currentLockToken === myToken) {
+                this.logger.info("[VNC] Releasing lock for current session.");
+                this.currentLockToken = null;
+                this.currentVncAbortController = null;
+            } else {
+                this.logger.warn("[VNC] Lock ownership changed during execution; skipping release.");
+            }
         }
     }
 
@@ -276,6 +448,8 @@ class CreateAuth {
 
         let { accountName } = req.body;
         const { context, page } = this.vncSession;
+        // Capture session ref to prevent global change affecting us
+        const sessionRef = this.vncSession;
 
         if (accountName) {
             this.logger.info(`[VNC] Using provided account name: ${accountName}`);
@@ -345,7 +519,7 @@ class CreateAuth {
 
             setTimeout(() => {
                 this.logger.info("[VNC] Cleaning up VNC session after saving...");
-                this._cleanupVncSession("auth_saved");
+                this._cleanupVncSession("auth_saved", sessionRef);
             }, 500);
         } catch (error) {
             this.logger.error(`[VNC] Failed to save auth file: ${error.message}`);
@@ -356,13 +530,24 @@ class CreateAuth {
         }
     }
 
-    async _cleanupVncSession(reason = "unknown") {
-        if (!this.vncSession) {
-            return;
+    async _cleanupVncSession(reason = "unknown", specificSession = null) {
+        // If specific session provided, operate on it.
+        // Otherwise use global (and nullify global if it matches).
+        let sessionToCleanup = specificSession;
+
+        if (!sessionToCleanup) {
+            sessionToCleanup = this.vncSession;
+            this.vncSession = null;
+        } else {
+            // If we are cleaning the active global session, null it out
+            if (this.vncSession === sessionToCleanup) {
+                this.vncSession = null;
+            }
         }
 
-        const sessionToCleanup = this.vncSession;
-        this.vncSession = null;
+        if (!sessionToCleanup) {
+            return;
+        }
 
         this.logger.info(`[VNC] Starting VNC session cleanup (Reason: ${reason})...`);
 
@@ -382,21 +567,18 @@ class CreateAuth {
             Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms))]);
 
         try {
-            if (context) {
-                // Wait max 2 seconds for context to close, otherwise proceed
+            if (browser) {
+                // Optimize: Browser close includes context close.
+                // Only need to wait for browser. Max 2 seconds.
+                await withTimeout(browser.close(), 2000);
+            } else if (context) {
+                // Fallback: If no browser (failed launch), try valid context
                 await withTimeout(context.close(), 2000);
             }
         } catch (e) {
-            // Ignore errors or timeouts
-        }
-
-        try {
-            if (browser) {
-                // Wait max 2 seconds for browser to close, otherwise proceed
-                await withTimeout(browser.close(), 2000);
-            }
-        } catch (e) {
-            this.logger.info(`[VNC] Browser close timed out or failed: ${e.message}. Proceeding to force kill.`);
+            this.logger.info(
+                `[VNC] Browser/Context close timed out or failed: ${e.message}. Proceeding to force kill.`
+            );
         }
 
         const killProcess = (proc, name) => {
