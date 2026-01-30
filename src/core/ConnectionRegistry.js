@@ -13,19 +13,26 @@ const MessageQueue = require("../utils/MessageQueue");
  * Responsible for managing WebSocket connections and message queues
  */
 class ConnectionRegistry extends EventEmitter {
-    constructor(logger) {
+    /**
+     * @param {Object} logger - Logger instance
+     * @param {Function} [onConnectionLostCallback] - Optional callback to invoke when connection is lost after grace period
+     */
+    constructor(logger, onConnectionLostCallback = null) {
         super();
         this.logger = logger;
+        this.onConnectionLostCallback = onConnectionLostCallback;
         this.connections = new Set();
         this.messageQueues = new Map();
         this.reconnectGraceTimer = null;
+        this.isReconnecting = false; // Flag to prevent multiple simultaneous reconnect attempts
     }
 
     addConnection(websocket, clientInfo) {
         if (this.reconnectGraceTimer) {
             clearTimeout(this.reconnectGraceTimer);
             this.reconnectGraceTimer = null;
-            this.logger.info("[Server] New connection detected during grace period, canceling disconnect handling.");
+            this.messageQueues.forEach(queue => queue.close());
+            this.messageQueues.clear();
         }
 
         this.connections.add(websocket);
@@ -42,14 +49,51 @@ class ConnectionRegistry extends EventEmitter {
         this.connections.delete(websocket);
         this.logger.warn("[Server] Internal WebSocket client disconnected.");
 
+        // Clear any existing grace timer before starting a new one
+        // This prevents multiple timers from running if connections disconnect in quick succession
+        if (this.reconnectGraceTimer) {
+            clearTimeout(this.reconnectGraceTimer);
+        }
+
         this.logger.info("[Server] Starting 5-second reconnect grace period...");
-        this.reconnectGraceTimer = setTimeout(() => {
+        this.reconnectGraceTimer = setTimeout(async () => {
             this.logger.error(
                 "[Server] Grace period ended, no reconnection detected. Connection lost confirmed, cleaning up all pending requests..."
             );
             this.messageQueues.forEach(queue => queue.close());
             this.messageQueues.clear();
+
+            // Attempt lightweight reconnect if callback is provided and not already reconnecting
+            if (this.onConnectionLostCallback && !this.isReconnecting) {
+                this.isReconnecting = true;
+                const lightweightReconnectTimeoutMs = 55000;
+                this.logger.info(
+                    `[Server] Attempting lightweight reconnect (timeout ${lightweightReconnectTimeoutMs / 1000}s)...`
+                );
+                let timeoutId;
+                try {
+                    const callbackPromise = this.onConnectionLostCallback();
+                    const timeoutPromise = new Promise((_, reject) => {
+                        timeoutId = setTimeout(
+                            () => reject(new Error("Lightweight reconnect timed out")),
+                            lightweightReconnectTimeoutMs
+                        );
+                    });
+                    await Promise.race([callbackPromise, timeoutPromise]);
+                    this.logger.info("[Server] Lightweight reconnect callback completed.");
+                } catch (error) {
+                    this.logger.error(`[Server] Lightweight reconnect failed: ${error.message}`);
+                } finally {
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                    }
+                    this.isReconnecting = false;
+                }
+            }
+
             this.emit("connectionLost");
+
+            this.reconnectGraceTimer = null;
         }, 5000);
 
         this.emit("connectionRemoved", websocket);
@@ -92,6 +136,14 @@ class ConnectionRegistry extends EventEmitter {
 
     hasActiveConnections() {
         return this.connections.size > 0;
+    }
+
+    isReconnectingInProgress() {
+        return this.isReconnecting;
+    }
+
+    isInGracePeriod() {
+        return !!this.reconnectGraceTimer;
     }
 
     getFirstConnection() {
