@@ -154,6 +154,50 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-image:streamGe
   }'
 ```
 
+### 🎨 Imagen (Image Generation)
+
+Use the `imagen` series models to generate images through the `:predict` endpoint.
+
+#### Basic Image Generation
+
+```bash
+curl -X POST http://localhost:7860/v1beta/models/imagen-4.0-generate-001:predict \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "instances": [
+      {
+        "prompt": "Robot holding a red skateboard"
+      }
+    ],
+    "parameters": {
+      "sampleCount": 1
+    }
+  }'
+```
+
+#### Generate Multiple Images
+
+Adjust `sampleCount` to generate multiple images at once (maximum 4).
+
+```bash
+curl -X POST http://localhost:7860/v1beta/models/imagen-4.0-generate-001:predict \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "instances": [
+      {
+        "prompt": "A futuristic city at sunset with flying cars"
+      }
+    ],
+    "parameters": {
+      "sampleCount": 4
+    }
+  }'
+```
+
+> 💡 **Tip**: Imagen responses return base64-encoded image data. Each generated image will be included in the `predictions` array.
+
 ### 🎤 TTS (Text-to-Speech)
 
 #### Basic TTS (Default Voice)

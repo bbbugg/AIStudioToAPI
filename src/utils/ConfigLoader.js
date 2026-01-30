@@ -65,7 +65,11 @@ class ConfigLoader {
         let rawCodes = process.env.IMMEDIATE_SWITCH_STATUS_CODES;
         let codesSource = "environment variable";
 
-        if (!rawCodes && config.immediateSwitchStatusCodes && Array.isArray(config.immediateSwitchStatusCodes)) {
+        if (
+            rawCodes === undefined &&
+            config.immediateSwitchStatusCodes &&
+            Array.isArray(config.immediateSwitchStatusCodes)
+        ) {
             rawCodes = config.immediateSwitchStatusCodes.join(",");
             codesSource = "default value";
         }
@@ -75,13 +79,12 @@ class ConfigLoader {
                 .split(",")
                 .map(code => parseInt(String(code).trim(), 10))
                 .filter(code => !isNaN(code) && code >= 400 && code <= 599);
-            if (config.immediateSwitchStatusCodes.length > 0) {
-                this.logger.info(`[System] Loaded "immediate switch status codes" from ${codesSource}.`);
-            }
         } else {
             config.immediateSwitchStatusCodes = [];
         }
-
+        if (config.immediateSwitchStatusCodes.length > 0) {
+            this.logger.info(`[System] Loaded "immediate switch status codes" from ${codesSource}.`);
+        }
         if (Array.isArray(config.apiKeys)) {
             config.apiKeys = config.apiKeys.map(k => String(k).trim()).filter(k => k);
         } else {

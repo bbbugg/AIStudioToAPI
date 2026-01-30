@@ -310,6 +310,51 @@
             "outputTokenLimit": 1,
             "supportedGenerationMethods": ["embedContent"],
             "modelStage": "LEGACY"
+        },
+        {
+            "name": "models/imagen-4.0-generate-preview-06-06",
+            "version": "01",
+            "displayName": "Imagen 4 (Preview)",
+            "description": "Vertex served Imagen 4.0 model",
+            "inputTokenLimit": 480,
+            "outputTokenLimit": 8192,
+            "supportedGenerationMethods": ["predict"]
+        },
+        {
+            "name": "models/imagen-4.0-ultra-generate-preview-06-06",
+            "version": "01",
+            "displayName": "Imagen 4 Ultra (Preview)",
+            "description": "Vertex served Imagen 4.0 ultra model",
+            "inputTokenLimit": 480,
+            "outputTokenLimit": 8192,
+            "supportedGenerationMethods": ["predict"]
+        },
+        {
+            "name": "models/imagen-4.0-generate-001",
+            "version": "001",
+            "displayName": "Imagen 4",
+            "description": "Vertex served Imagen 4.0 model",
+            "inputTokenLimit": 480,
+            "outputTokenLimit": 8192,
+            "supportedGenerationMethods": ["predict"]
+        },
+        {
+            "name": "models/imagen-4.0-ultra-generate-001",
+            "version": "001",
+            "displayName": "Imagen 4 Ultra",
+            "description": "Vertex served Imagen 4.0 ultra model",
+            "inputTokenLimit": 480,
+            "outputTokenLimit": 8192,
+            "supportedGenerationMethods": ["predict"]
+        },
+        {
+            "name": "models/imagen-4.0-fast-generate-001",
+            "version": "001",
+            "displayName": "Imagen 4 Fast",
+            "description": "Vertex served Imagen 4.0 Fast model",
+            "inputTokenLimit": 480,
+            "outputTokenLimit": 8192,
+            "supportedGenerationMethods": ["predict"]
         }
     ]
 }

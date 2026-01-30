@@ -200,6 +200,7 @@ This endpoint is forwarded to the official Gemini API format endpoint.
 - `POST /v1beta/models/{model_name}:generateContent`: Generate content, images, and speech.
 - `POST /v1beta/models/{model_name}:streamGenerateContent`: Stream content, image, and speech generation, supports real and fake streaming.
 - `POST /v1beta/models/{model_name}:batchEmbedContents`: Batch generate text embedding vectors.
+- `POST /v1beta/models/{model_name}:predict`: Imagen series models image generation.
 
 > 📖 For detailed API usage examples, see: [API Usage Examples](docs/en/api-examples.md)
 
@@ -218,7 +219,7 @@ This endpoint is forwarded to the official Gemini API format endpoint.
 | `SECURE_COOKIES`            | Enable secure cookies. `true` for HTTPS only, `false` for both HTTP and HTTPS. | `false`              |
 | `RATE_LIMIT_MAX_ATTEMPTS`   | Maximum failed login attempts allowed within the time window (`0` to disable). | `5`                  |
 | `RATE_LIMIT_WINDOW_MINUTES` | Time window for rate limiting in minutes.                                      | `15`                 |
-| `CHECK_UPDATE`              | Enable version update check on page load. Set to `false` to disable.           | `true`               |
+| `CHECK_UPDATE`              | Enable version update check on page load (`false` to disable).                 | `true`               |
 | `LOG_LEVEL`                 | Logging output level. Set to `DEBUG` for detailed debug logs.                  | `INFO`               |
 
 #### 🌐 Proxy Configuration
@@ -231,7 +232,7 @@ This endpoint is forwarded to the official Gemini API format endpoint.
 | `RETRY_DELAY`                   | Delay between retries in milliseconds.                                                                                                                                                                    | `2000`    |
 | `SWITCH_ON_USES`                | Number of requests before automatically switching accounts (`0` to disable).                                                                                                                              | `40`      |
 | `FAILURE_THRESHOLD`             | Number of consecutive failures before switching accounts (`0` to disable).                                                                                                                                | `3`       |
-| `IMMEDIATE_SWITCH_STATUS_CODES` | HTTP status codes that trigger immediate account switching (comma-separated).                                                                                                                             | `429,503` |
+| `IMMEDIATE_SWITCH_STATUS_CODES` | HTTP status codes that trigger immediate account switching (comma-separated, set to empty to disable).                                                                                                    | `429,503` |
 
 #### 🗒️ Other Configuration
 

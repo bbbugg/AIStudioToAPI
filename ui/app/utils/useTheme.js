@@ -45,6 +45,11 @@ watchEffect(() => {
         htmlEl.classList.remove('dark');
     }
 
+    const faviconLink = document.querySelector('link[rel="icon"]');
+    if (faviconLink) {
+        faviconLink.href = isDark ? '/AIStudio_logo_dark.svg' : '/AIStudio_logo.svg';
+    }
+
     localStorage.setItem('theme', currentTheme);
 });
 

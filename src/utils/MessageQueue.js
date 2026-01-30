@@ -12,7 +12,7 @@ const { EventEmitter } = require("events");
  * Responsible for managing asynchronous message enqueue and dequeue
  */
 class MessageQueue extends EventEmitter {
-    constructor(timeoutMs = 600000) {
+    constructor(timeoutMs = 300000) {
         super();
         this.messages = [];
         this.waitingResolvers = [];

@@ -125,61 +125,6 @@ class ProxyServerSystem extends EventEmitter {
 
     _createAuthMiddleware() {
         return (req, res, next) => {
-            // Whitelist paths that don't require API key authentication
-            // Note: /, /api/status use session authentication instead
-            // Whitelist paths that don't require API key authentication (Method specific)
-            // Note: /, /api/status use session authentication instead
-            const whitelistRules = [
-                { methods: ["GET", "POST"], path: "/" }, // POST is 405 but handled
-                { methods: ["GET"], path: "/favicon.ico" },
-                { methods: ["GET", "POST"], path: "/login" },
-                { methods: ["GET"], path: "/health" },
-                { methods: ["GET"], path: "/api/status" },
-                { methods: ["GET"], path: "/api/version/check" },
-                { methods: ["PUT"], path: "/api/accounts/current" },
-                { methods: ["POST"], path: "/api/accounts/deduplicate" },
-                { methods: ["PUT"], path: "/api/settings/streaming-mode" },
-                { methods: ["PUT"], path: "/api/settings/force-thinking" },
-                { methods: ["PUT"], path: "/api/settings/force-web-search" },
-                { methods: ["PUT"], path: "/api/settings/force-url-context" },
-                { methods: ["PUT"], path: "/api/settings/debug-mode" },
-                { methods: ["PUT"], path: "/api/settings/log-max-count" },
-                { methods: ["GET"], path: "/auth" },
-                // VNC Routes must be accessible for authenticated sessions (which bypass key check via session check below),
-                // but checking here explicitely is safer
-                { methods: ["POST", "DELETE"], path: "/api/vnc/sessions" },
-                { methods: ["POST"], path: "/api/vnc/auth" },
-                { methods: ["POST"], path: "/api/files" },
-            ];
-
-            // Whitelist path patterns (regex) with allowed methods
-            const whitelistPatterns = [
-                { methods: ["DELETE"], pattern: /^\/api\/accounts\/\d+$/ }, // Matches /api/accounts/:index for DELETE operations
-                { methods: ["GET"], pattern: /^\/api\/files\/[a-zA-Z0-9.-]+$/ },
-            ];
-
-            // strict method check for static files
-            const staticPrefixes = ["/assests/", "/assets/", "/AIStudio_logo.svg", "/AIStudio_icon.svg", "/locales/"];
-            const isStaticFile =
-                req.method === "GET" &&
-                staticPrefixes.some(prefix => req.path.startsWith(prefix) || req.path === prefix);
-
-            // Check exact path match
-            const matchedRule = whitelistRules.find(rule => rule.path === req.path);
-            if (matchedRule && matchedRule.methods.includes(req.method)) {
-                return next();
-            }
-
-            // Check pattern match
-            const matchedPattern = whitelistPatterns.find(rule => rule.pattern.test(req.path));
-            if (matchedPattern && matchedPattern.methods.includes(req.method)) {
-                return next();
-            }
-
-            if (isStaticFile) {
-                return next();
-            }
-
             // Allow access if session is authenticated (e.g. browser accessing /vnc or API from UI)
             if (req.session && req.session.isAuthenticated) {
                 if (req.path === "/vnc") {
@@ -256,45 +201,58 @@ class ProxyServerSystem extends EventEmitter {
             const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
 
             if (pathname === "/vnc") {
-                this.logger.info("[VNC Proxy] Detected VNC WebSocket upgrade request. Proxying...");
-                const target = net.createConnection({ host: "localhost", port: 6080 });
+                this.logger.info("[VNC Proxy] Detected VNC WebSocket upgrade request. Verifying session...");
 
-                target.on("connect", () => {
-                    this.logger.info("[VNC Proxy] Successfully connected to internal websockify (port 6080).");
-
-                    // Forward the WebSocket handshake headers to the backend
-                    const headers = [
-                        `GET ${req.url} HTTP/1.1`,
-                        "Host: localhost:6080",
-                        "Upgrade: websocket",
-                        "Connection: Upgrade",
-                        `Sec-WebSocket-Key: ${req.headers["sec-websocket-key"]}`,
-                        `Sec-WebSocket-Version: ${req.headers["sec-websocket-version"]}`,
-                    ];
-
-                    if (req.headers["sec-websocket-protocol"]) {
-                        headers.push(`Sec-WebSocket-Protocol: ${req.headers["sec-websocket-protocol"]}`);
+                // Use the session parser from WebRoutes to verify authentication
+                this.webRoutes.sessionParser(req, {}, () => {
+                    if (!req.session || !req.session.isAuthenticated) {
+                        const clientIp = this.webRoutes.authRoutes.getClientIP(req);
+                        this.logger.warn(`[VNC Proxy] Unauthorized WebSocket connection attempt from ${clientIp}`);
+                        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+                        socket.destroy();
+                        return;
                     }
 
-                    if (req.headers["sec-websocket-extensions"]) {
-                        headers.push(`Sec-WebSocket-Extensions: ${req.headers["sec-websocket-extensions"]}`);
-                    }
+                    this.logger.info("[VNC Proxy] Session verified. Proxying...");
+                    const target = net.createConnection({ host: "localhost", port: 6080 });
 
-                    // Write the handshake to the backend
-                    target.write(headers.join("\r\n") + "\r\n\r\n");
+                    target.on("connect", () => {
+                        this.logger.info("[VNC Proxy] Successfully connected to internal websockify (port 6080).");
 
-                    // Pipe the sockets together. The backend will respond with 101, which goes to the client.
-                    target.pipe(socket).pipe(target);
-                });
+                        // Forward the WebSocket handshake headers to the backend
+                        const headers = [
+                            `GET ${req.url} HTTP/1.1`,
+                            "Host: localhost:6080",
+                            "Upgrade: websocket",
+                            "Connection: Upgrade",
+                            `Sec-WebSocket-Key: ${req.headers["sec-websocket-key"]}`,
+                            `Sec-WebSocket-Version: ${req.headers["sec-websocket-version"]}`,
+                        ];
 
-                target.on("error", err => {
-                    this.logger.error(`[VNC Proxy] Error connecting to internal websockify: ${err.message}`);
-                    socket.destroy();
-                });
+                        if (req.headers["sec-websocket-protocol"]) {
+                            headers.push(`Sec-WebSocket-Protocol: ${req.headers["sec-websocket-protocol"]}`);
+                        }
 
-                socket.on("error", err => {
-                    this.logger.error(`[VNC Proxy] Client socket error: ${err.message}`);
-                    target.destroy();
+                        if (req.headers["sec-websocket-extensions"]) {
+                            headers.push(`Sec-WebSocket-Extensions: ${req.headers["sec-websocket-extensions"]}`);
+                        }
+
+                        // Write the handshake to the backend
+                        target.write(headers.join("\r\n") + "\r\n\r\n");
+
+                        // Pipe the sockets together. The backend will respond with 101, which goes to the client.
+                        target.pipe(socket).pipe(target);
+                    });
+
+                    target.on("error", err => {
+                        this.logger.error(`[VNC Proxy] Error connecting to internal websockify: ${err.message}`);
+                        socket.destroy();
+                    });
+
+                    socket.on("error", err => {
+                        this.logger.error(`[VNC Proxy] Client socket error: ${err.message}`);
+                        target.destroy();
+                    });
                 });
             } else {
                 // If it's not for VNC, destroy the socket to prevent hanging connections
@@ -332,7 +290,11 @@ class ProxyServerSystem extends EventEmitter {
                 req.path !== "/" &&
                 req.path !== "/favicon.ico" &&
                 req.path !== "/login" &&
-                req.path !== "/health"
+                req.path !== "/health" &&
+                !req.path.startsWith("/locales/") &&
+                !req.path.startsWith("/assets/") &&
+                req.path !== "/AIStudio_logo.svg" &&
+                req.path !== "/AIStudio_icon.svg"
             ) {
                 this.logger.info(`[Entrypoint] Received a request: ${req.method} ${req.path}`);
             }

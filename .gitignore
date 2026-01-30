@@ -29,3 +29,5 @@ tmp/
 ui/dist/
 *.css
 test/
+debug_*.png
+debug_*.html
