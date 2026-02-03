@@ -134,7 +134,16 @@ class FormatConverter {
 
             for (const key of Object.keys(obj)) {
                 // Skip fields not supported by Gemini API
-                if (key === "$schema" || key === "additionalProperties") {
+                const unsupportedKeys = [
+                    "$schema",
+                    "additionalProperties",
+                    "ref",
+                    "$ref",
+                    "propertyNames",
+                    "patternProperties",
+                    "unevaluatedProperties",
+                ];
+                if (unsupportedKeys.includes(key)) {
                     continue;
                 }
 
@@ -170,12 +179,107 @@ class FormatConverter {
     }
 
     /**
+     * Convert JSON Schema to Gemini parameters format.
+     * Handles nullable types, enums, and ensures uppercase types.
+     *
+     * @param {Object} obj - The schema object to convert
+     * @param {boolean} [isResponseSchema=false] - If true, applies stricter rules (e.g. anyOf for unions) for Structured Outputs
+     * @returns {Object} The converted schema
+     */
+    _convertSchemaToGemini(obj, isResponseSchema = false) {
+        if (!obj || typeof obj !== "object") return obj;
+
+        const result = Array.isArray(obj) ? [] : {};
+
+        for (const key of Object.keys(obj)) {
+            // 1. Filter out unsupported fields using a blacklist approach
+            const unsupportedKeys = [
+                "$schema",
+                "additionalProperties",
+                "ref",
+                "$ref",
+                "propertyNames",
+                "patternProperties",
+                "unevaluatedProperties",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+                "const",
+            ];
+
+            if (isResponseSchema) {
+                // For Structured Outputs: stricter filtering of metadata that causes 400 errors
+                unsupportedKeys.push("title", "default", "examples", "$defs", "id");
+            }
+
+            if (unsupportedKeys.includes(key)) {
+                continue;
+            }
+
+            if (key === "type") {
+                if (Array.isArray(obj[key])) {
+                    // Handle nullable types like ["string", "null"]
+                    const types = obj[key];
+                    const nonNullTypes = types.filter(t => t !== "null");
+                    const hasNull = types.includes("null");
+
+                    if (hasNull) {
+                        result.nullable = true;
+                    }
+
+                    if (nonNullTypes.length === 1) {
+                        // Single non-null type: use it directly
+                        result[key] = nonNullTypes[0].toUpperCase();
+                    } else if (nonNullTypes.length > 1) {
+                        // Multiple non-null types: e.g. ["string", "integer"]
+                        if (isResponseSchema) {
+                            // For Response Schema: Gemini doesn't support array types, use anyOf
+                            result.anyOf = nonNullTypes.map(t => ({
+                                type: t.toUpperCase(),
+                            }));
+                        } else {
+                            result[key] = nonNullTypes.map(t => t.toUpperCase());
+                        }
+                    } else {
+                        // Only null type, default to STRING
+                        result[key] = "STRING";
+                    }
+                } else if (typeof obj[key] === "string") {
+                    // Convert lowercase type to uppercase for Gemini
+                    result[key] = obj[key].toUpperCase();
+                } else if (typeof obj[key] === "object" && obj[key] !== null) {
+                    result[key] = this._convertSchemaToGemini(obj[key], isResponseSchema);
+                } else {
+                    result[key] = obj[key];
+                }
+            } else if (key === "enum") {
+                // 2. Ensure all enum values are strings (Only for Response Schema)
+                if (isResponseSchema) {
+                    if (Array.isArray(obj[key])) {
+                        result[key] = obj[key].map(String);
+                    } else if (obj[key] !== undefined && obj[key] !== null) {
+                        result[key] = [String(obj[key])];
+                    }
+                    result["type"] = "STRING";
+                } else {
+                    // For Tools: Allow original enum values
+                    result[key] = obj[key];
+                }
+            } else if (typeof obj[key] === "object" && obj[key] !== null) {
+                result[key] = this._convertSchemaToGemini(obj[key], isResponseSchema);
+            } else {
+                result[key] = obj[key];
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * Convert OpenAI request format to Google Gemini format
      * @param {object} openaiBody - OpenAI format request body
      * @returns {Promise<{ googleRequest: object, cleanModelName: string }>} - Converted request and cleaned model name
      */
     async translateOpenAIToGoogle(openaiBody) {
-        // eslint-disable-line no-unused-vars
         this.logger.info("[Adapter] Starting translation of OpenAI request format to Google format...");
 
         // Parse thinkingLevel suffix from model name (e.g., gemini-3-flash-preview-minimal or gemini-3-flash-preview(low))
@@ -189,7 +293,7 @@ class FormatConverter {
         }
 
         // [DEBUG] Log incoming messages for troubleshooting
-        this.logger.debug(`[Adapter] Debug: incoming messages = ${JSON.stringify(openaiBody.messages, null, 2)}`);
+        this.logger.debug(`[Adapter] Debug: incoming OpenAI Body = ${JSON.stringify(openaiBody, null, 2)}`);
         // [DEBUG] Log original OpenAI tools
         if (openaiBody.tools && openaiBody.tools.length > 0) {
             this.logger.debug(`[Adapter] Debug: original OpenAI tools = ${JSON.stringify(openaiBody.tools, null, 2)}`);
@@ -497,101 +601,6 @@ class FormatConverter {
 
         googleRequest.generationConfig = generationConfig;
 
-        /**
-         * Helper function to convert OpenAI parameter types to Gemini format (uppercase).
-         * Also handles nullable types like ["string", "null"] -> type: "STRING", nullable: true.
-         * This function is used for both tools and response_format schema conversion.
-         *
-         * @param {Object} obj - The schema object to convert
-         * @param {boolean} [isResponseSchema=false] - If true, applies stricter rules (e.g. anyOf for unions) for Structured Outputs
-         * @returns {Object} The converted schema
-         */
-        const convertParameterTypes = (obj, isResponseSchema = false) => {
-            if (!obj || typeof obj !== "object") return obj;
-
-            const result = Array.isArray(obj) ? [] : {};
-
-            for (const key of Object.keys(obj)) {
-                // 1. Filter out unsupported fields using a blacklist approach
-                // This allows potentially valid fields to pass through while blocking known problematic ones
-                const unsupportedKeys = [
-                    "$schema",
-                    "additionalProperties",
-                    "ref",
-                    "$ref",
-                    "propertyNames",
-                    "patternProperties",
-                    "unevaluatedProperties",
-                ];
-
-                if (isResponseSchema) {
-                    // For Structured Outputs: stricter filtering of metadata that causes 400 errors
-                    unsupportedKeys.push("title", "default", "examples", "$defs", "id");
-                }
-
-                if (unsupportedKeys.includes(key)) {
-                    continue;
-                }
-
-                if (key === "type") {
-                    if (Array.isArray(obj[key])) {
-                        // Handle nullable types like ["string", "null"]
-                        const types = obj[key];
-                        const nonNullTypes = types.filter(t => t !== "null");
-                        const hasNull = types.includes("null");
-
-                        if (hasNull) {
-                            result.nullable = true;
-                        }
-
-                        if (nonNullTypes.length === 1) {
-                            // Single non-null type: use it directly
-                            result[key] = nonNullTypes[0].toUpperCase();
-                        } else if (nonNullTypes.length > 1) {
-                            // Multiple non-null types: e.g. ["string", "integer"]
-                            if (isResponseSchema) {
-                                // For Response Schema: Gemini doesn't support array types, use anyOf
-                                result.anyOf = nonNullTypes.map(t => ({
-                                    type: t.toUpperCase(),
-                                }));
-                            } else {
-                                result[key] = nonNullTypes.map(t => t.toUpperCase());
-                            }
-                        } else {
-                            // Only null type, default to STRING
-                            result[key] = "STRING";
-                        }
-                    } else if (typeof obj[key] === "string") {
-                        // Convert lowercase type to uppercase for Gemini
-                        result[key] = obj[key].toUpperCase();
-                    } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                        result[key] = convertParameterTypes(obj[key], isResponseSchema);
-                    } else {
-                        result[key] = obj[key];
-                    }
-                } else if (key === "enum") {
-                    // 2. Ensure all enum values are strings (Only for Response Schema)
-                    if (isResponseSchema) {
-                        if (Array.isArray(obj[key])) {
-                            result[key] = obj[key].map(String);
-                        } else if (obj[key] !== undefined && obj[key] !== null) {
-                            result[key] = [String(obj[key])];
-                        }
-                        result["type"] = "STRING";
-                    } else {
-                        // For Tools: Allow original enum values
-                        result[key] = obj[key];
-                    }
-                } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                    result[key] = convertParameterTypes(obj[key], isResponseSchema);
-                } else {
-                    result[key] = obj[key];
-                }
-            }
-
-            return result;
-        };
-
         // Convert OpenAI tools to Gemini functionDeclarations
         const openaiTools = openaiBody.tools || openaiBody.functions;
         if (openaiTools && Array.isArray(openaiTools) && openaiTools.length > 0) {
@@ -612,11 +621,9 @@ class FormatConverter {
                     }
 
                     if (funcDef.parameters) {
-                        // Convert parameter types from lowercase to uppercase
-                        // isResponseSchema = false for Tools
-                        declaration.parameters = convertParameterTypes(funcDef.parameters, false);
+                        // Use shared _convertSchemaToGemini
+                        declaration.parameters = this._convertSchemaToGemini(funcDef.parameters);
                     }
-
                     functionDeclarations.push(declaration);
                 }
             }
@@ -674,9 +681,9 @@ class FormatConverter {
                     try {
                         this.logger.debug(`[Adapter] Debug: Converting OpenAI JSON Schema: ${JSON.stringify(schema)}`);
 
-                        // Convert schema to Gemini format (reuse convertParameterTypes helper defined above)
+                        // Convert schema to Gemini format (reuse shared method)
                         // isResponseSchema = true for Structured Output
-                        const convertedSchema = convertParameterTypes(schema, true);
+                        const convertedSchema = this._convertSchemaToGemini(schema, true);
 
                         this.logger.debug(
                             `[Adapter] Debug: Converted Gemini JSON Schema: ${JSON.stringify(convertedSchema)}`
@@ -760,8 +767,7 @@ class FormatConverter {
                 `[Adapter] Debug: Sanitized Openai tools = ${JSON.stringify(googleRequest.tools, null, 2)}`
             );
         }
-
-        this.logger.info("[Adapter] Translation complete.");
+        this.logger.info("[Adapter] OpenAI to Google translation complete.");
         return { cleanModelName, googleRequest };
     }
 
@@ -1118,10 +1124,26 @@ class FormatConverter {
         }
 
         // [DEBUG] Log incoming messages
-        this.logger.debug(`[Adapter] Debug: incoming Claude messages = ${JSON.stringify(claudeBody.messages, null, 2)}`);
+        this.logger.debug(`[Adapter] Debug: incoming Claude Body = ${JSON.stringify(claudeBody, null, 2)}`);
 
         let systemInstruction = null;
         const googleContents = [];
+
+        // Pre-scan messages to build a map of tool_use_id -> function_name
+        // This is required because Gemini's functionResponse needs the original function name,
+        // but Claude's tool_result only provides the tool_use_id.
+        const toolIdToNameMap = new Map();
+        if (claudeBody.messages && Array.isArray(claudeBody.messages)) {
+            for (const message of claudeBody.messages) {
+                if (message.role === "assistant" && Array.isArray(message.content)) {
+                    for (const block of message.content) {
+                        if (block.type === "tool_use" && block.id && block.name) {
+                            toolIdToNameMap.set(block.id, block.name);
+                        }
+                    }
+                }
+            }
+        }
 
         // Extract system message (Claude uses a separate 'system' field)
         if (claudeBody.system) {
@@ -1160,7 +1182,8 @@ class FormatConverter {
                         if (typeof toolResult.content === "string") {
                             try {
                                 responseContent = JSON.parse(toolResult.content);
-                            } catch {
+                            } catch (e) {
+                                /* eslint-disable-line no-unused-vars */
                                 responseContent = { result: toolResult.content };
                             }
                         } else if (Array.isArray(toolResult.content)) {
@@ -1178,9 +1201,20 @@ class FormatConverter {
                             responseContent = toolResult.content || { result: "" };
                         }
 
+                        // Resolve function name using the map
+                        const toolUseId = toolResult.tool_use_id;
+                        let functionName = toolIdToNameMap.get(toolUseId);
+
+                        if (!functionName) {
+                            this.logger.warn(
+                                `[Adapter] Warning: Tool name resolution failed for ID: ${toolUseId}. outputting as unknown_function`
+                            );
+                            functionName = "unknown_function";
+                        }
+
                         pendingToolParts.push({
                             functionResponse: {
-                                name: toolResult.tool_use_id || "unknown_function",
+                                name: functionName,
                                 response: responseContent,
                             },
                         });
@@ -1208,8 +1242,11 @@ class FormatConverter {
             }
 
             // Flush pending tool parts before non-tool messages
-            if (message.role !== "user" || !Array.isArray(message.content) ||
-                !message.content.some(block => block.type === "tool_result")) {
+            if (
+                message.role !== "user" ||
+                !Array.isArray(message.content) ||
+                !message.content.some(block => block.type === "tool_result")
+            ) {
                 flushToolParts();
             }
 
@@ -1271,9 +1308,14 @@ class FormatConverter {
                                             mimeType,
                                         },
                                     });
+                                    this.logger.info(
+                                        `[Adapter] Successfully downloaded and converted image to base64.`
+                                    );
                                 } catch (error) {
                                     this.logger.error(`[Adapter] Failed to download image: ${error.message}`);
-                                    googleParts.push({ text: `[System Note: Failed to load image from ${source.url}]` });
+                                    googleParts.push({
+                                        text: `[System Note: Failed to load image from ${source.url}]`,
+                                    });
                                 }
                             }
                         }
@@ -1292,6 +1334,10 @@ class FormatConverter {
         // Flush remaining tool parts
         flushToolParts();
 
+        // [DEBUG] Log full content construction
+        this.logger.debug(`[Adapter] Debug: googleContents length = ${googleContents.length}`);
+        this.logger.debug(`[Adapter] Debug: googleContents = ${JSON.stringify(googleContents, null, 2)}`);
+
         // Build Google request
         const googleRequest = {
             contents: googleContents,
@@ -1309,13 +1355,21 @@ class FormatConverter {
             topP: claudeBody.top_p,
         };
 
-        // Handle thinking config from Claude's metadata
+        // Handle thinking config from Claude's metadata or top-level thinking
         let thinkingConfig = null;
-        if (claudeBody.metadata?.thinking?.enabled) {
+
+        const thinkingParam = claudeBody.thinking || claudeBody.metadata?.thinking;
+
+        // Check if thinking is enabled:
+        // 1. metadata style: { enabled: true }
+        // 2. top-level style: { type: "enabled" }
+        const isThinkingEnabled = thinkingParam && (thinkingParam.enabled === true || thinkingParam.type === "enabled");
+
+        if (isThinkingEnabled) {
             thinkingConfig = { includeThoughts: true };
-            if (claudeBody.metadata.thinking.budget_tokens) {
+            if (thinkingParam.budget_tokens) {
                 // Gemini doesn't have budget_tokens, but we can log it
-                this.logger.info(`[Adapter] Claude thinking budget_tokens: ${claudeBody.metadata.thinking.budget_tokens}`);
+                this.logger.info(`[Adapter] Claude thinking budget_tokens: ${thinkingParam.budget_tokens}`);
             }
         }
 
@@ -1333,20 +1387,84 @@ class FormatConverter {
 
         if (thinkingConfig) {
             generationConfig.thinkingConfig = thinkingConfig;
+            this.logger.info(
+                `[Adapter] Successfully extracted and converted thinking config: ${JSON.stringify(thinkingConfig)}`
+            );
+        }
+
+        // Handle Claude's structured output (output_format)
+        // Ref: https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs
+        if (claudeBody.output_format) {
+            if (claudeBody.output_format.type === "json_schema") {
+                // Support both direct 'schema' (user example) and 'json_schema' wrapper (OpenAI style)
+                let schema = claudeBody.output_format.schema;
+                let schemaName = "structured_output";
+
+                if (!schema && claudeBody.output_format.json_schema) {
+                    schema = claudeBody.output_format.json_schema.schema;
+                    schemaName = claudeBody.output_format.json_schema.name || schemaName;
+                }
+
+                if (schema) {
+                    generationConfig.responseMimeType = "application/json";
+                    generationConfig.responseSchema = this._convertSchemaToGemini(schema, true);
+                    this.logger.info(
+                        `[Adapter] Converted Claude output_format to Gemini responseSchema. Name: ${schemaName}`
+                    );
+                }
+            } else if (claudeBody.output_format.type === "json_object") {
+                generationConfig.responseMimeType = "application/json";
+                this.logger.info(`[Adapter] Converted Claude output_format (json_object) to Gemini responseMimeType.`);
+            } else if (claudeBody.output_format.type === "text") {
+                generationConfig.responseMimeType = "text/plain";
+            }
+        }
+
+        // Handle Claude's output_config (new format)
+        if (claudeBody.output_config && claudeBody.output_config.format) {
+            const format = claudeBody.output_config.format;
+            if (format.type === "json_schema" && format.schema) {
+                generationConfig.responseMimeType = "application/json";
+                generationConfig.responseSchema = this._convertSchemaToGemini(format.schema, true);
+                this.logger.info(
+                    `[Adapter] Converted Claude output_config to Gemini responseSchema. Title: ${format.schema.title || "untitled"}`
+                );
+            }
         }
 
         googleRequest.generationConfig = generationConfig;
 
         // Convert Claude tools to Gemini functionDeclarations
         if (claudeBody.tools && Array.isArray(claudeBody.tools) && claudeBody.tools.length > 0) {
+            this.logger.debug(`[Adapter] Debug: original Claude tools = ${JSON.stringify(claudeBody.tools, null, 2)}`);
+            let hasWebSearchTool = false;
+            let hasUrlContextTool = false;
             const functionDeclarations = [];
 
             for (const tool of claudeBody.tools) {
+                // Handle specialized web search tool type (e.g. from Claude's search integration)
+                if (tool.type === "web_search_20250305" && tool.name === "web_search") {
+                    hasWebSearchTool = true;
+                    this.logger.info(
+                        `[Adapter] Detected web search tool in Claude request (name: ${tool.name}, type: ${tool.type}), mapping to Gemini googleSearch.`
+                    );
+                    continue; // Skip adding to functionDeclarations
+                }
+
+                // Handle specialized web fetch tool type, mapped to urlContext (Gemini 2.0 Feature)
+                if (tool.type === "web_fetch_20250910" && tool.name === "web_fetch") {
+                    hasUrlContextTool = true;
+                    this.logger.info(
+                        `[Adapter] Detected web fetch tool in Claude request (name: ${tool.name}, type: ${tool.type}), mapping to Gemini urlContext.`
+                    );
+                    continue; // Skip adding to functionDeclarations
+                }
+
                 if (tool.name) {
                     const declaration = { name: tool.name };
                     if (tool.description) declaration.description = tool.description;
                     if (tool.input_schema) {
-                        declaration.parameters = this._convertClaudeSchemaToGemini(tool.input_schema);
+                        declaration.parameters = this._convertSchemaToGemini(tool.input_schema);
                     }
                     functionDeclarations.push(declaration);
                 }
@@ -1355,6 +1473,22 @@ class FormatConverter {
             if (functionDeclarations.length > 0) {
                 googleRequest.tools = [{ functionDeclarations }];
                 this.logger.info(`[Adapter] Converted ${functionDeclarations.length} Claude tool(s) to Gemini format`);
+            }
+
+            // If web search tool was found, ensure googleSearch is added to tools
+            if (hasWebSearchTool) {
+                if (!googleRequest.tools) googleRequest.tools = [];
+                if (!googleRequest.tools.some(t => t.googleSearch)) {
+                    googleRequest.tools.push({ googleSearch: {} });
+                }
+            }
+
+            // If web fetch tool was found, ensure urlContext is added to tools
+            if (hasUrlContextTool) {
+                if (!googleRequest.tools) googleRequest.tools = [];
+                if (!googleRequest.tools.some(t => t.urlContext)) {
+                    googleRequest.tools.push({ urlContext: {} });
+                }
             }
         }
 
@@ -1374,6 +1508,16 @@ class FormatConverter {
             if (Object.keys(functionCallingConfig).length > 0) {
                 googleRequest.toolConfig = { functionCallingConfig };
             }
+        }
+
+        // Handle Claude's disable_parallel_tool_use
+        // Note: Gemini doesn't have a direct equivalent for this at the toolConfig level,
+        // but we can log it for debug purposes. Future improvements might involve
+        // filtering outputs if the model ignores the implied constraint.
+        if (claudeBody.tool_choice && claudeBody.tool_choice.disable_parallel_tool_use === true) {
+            this.logger.info(
+                "[Adapter] Claude request specifies disable_parallel_tool_use=true (Note: Applied as best-effort in Gemini)."
+            );
         }
 
         // Force web search and URL context
@@ -1396,30 +1540,15 @@ class FormatConverter {
         ];
 
         this.logger.info("[Adapter] Claude to Google translation complete.");
-        return { cleanModelName, googleRequest };
-    }
 
-    /**
-     * Convert Claude input_schema to Gemini parameters format
-     */
-    _convertClaudeSchemaToGemini(schema) {
-        if (!schema || typeof schema !== "object") return schema;
-
-        const result = Array.isArray(schema) ? [] : {};
-        const unsupportedKeys = ["$schema", "additionalProperties", "$ref", "patternProperties"];
-
-        for (const key of Object.keys(schema)) {
-            if (unsupportedKeys.includes(key)) continue;
-
-            if (key === "type" && typeof schema[key] === "string") {
-                result[key] = schema[key].toUpperCase();
-            } else if (typeof schema[key] === "object" && schema[key] !== null) {
-                result[key] = this._convertClaudeSchemaToGemini(schema[key]);
-            } else {
-                result[key] = schema[key];
-            }
+        // [DEBUG] Log full request body for troubleshooting
+        if (googleRequest.tools && googleRequest.tools.length > 0) {
+            this.logger.debug(
+                `[Adapter] Debug: Converted Gemini tools = ${JSON.stringify(googleRequest.tools, null, 2)}`
+            );
         }
-        return result;
+
+        return { cleanModelName, googleRequest };
     }
 
     /**
@@ -1452,21 +1581,26 @@ class FormatConverter {
             return null;
         }
 
+        const candidate = googleResponse.candidates?.[0];
+        const usage = googleResponse.usageMetadata;
+
+        // Update stream state with usage if available
+        if (usage) {
+            const inputTokens = (usage.promptTokenCount || 0) + (usage.toolUsePromptTokenCount || 0);
+            const outputTokens = (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0);
+
+            if (inputTokens > 0) streamState.inputTokens = inputTokens;
+            streamState.outputTokens = outputTokens;
+        }
+
         // Initialize stream state
         if (!streamState.messageId) {
             streamState.messageId = `msg_${this._generateRequestId()}`;
             streamState.contentBlockIndex = 0;
-            streamState.inputTokens = 0;
-            streamState.outputTokens = 0;
+            if (!streamState.inputTokens) streamState.inputTokens = 0;
+            if (!streamState.outputTokens) streamState.outputTokens = 0;
         }
 
-        // Cache usage data
-        if (googleResponse.usageMetadata) {
-            streamState.inputTokens = googleResponse.usageMetadata.promptTokenCount || 0;
-            streamState.outputTokens = googleResponse.usageMetadata.candidatesTokenCount || 0;
-        }
-
-        const candidate = googleResponse.candidates?.[0];
         if (!candidate) {
             if (googleResponse.promptFeedback) {
                 this.logger.warn(`[Adapter] Google returned promptFeedback for Claude stream`);
@@ -1479,20 +1613,20 @@ class FormatConverter {
         // Send message_start event once
         if (!streamState.messageStartSent) {
             events.push({
-                type: "message_start",
                 message: {
-                    id: streamState.messageId,
-                    type: "message",
-                    role: "assistant",
                     content: [],
+                    id: streamState.messageId,
                     model: modelName,
+                    role: "assistant",
                     stop_reason: null,
                     stop_sequence: null,
+                    type: "message",
                     usage: {
-                        input_tokens: streamState.inputTokens,
+                        input_tokens: streamState.inputTokens || 0,
                         output_tokens: 0,
                     },
                 },
+                type: "message_start",
             });
             streamState.messageStartSent = true;
         }
@@ -1504,67 +1638,96 @@ class FormatConverter {
                     // Thinking content
                     if (!streamState.thinkingBlockStarted) {
                         events.push({
-                            type: "content_block_start",
+                            content_block: { thinking: "", type: "thinking" },
                             index: streamState.contentBlockIndex,
-                            content_block: { type: "thinking", thinking: "" },
+                            type: "content_block_start",
                         });
                         streamState.thinkingBlockStarted = true;
                         streamState.thinkingBlockIndex = streamState.contentBlockIndex;
                         streamState.contentBlockIndex++;
                     }
                     events.push({
-                        type: "content_block_delta",
+                        delta: { thinking: part.text, type: "thinking_delta" },
                         index: streamState.thinkingBlockIndex,
-                        delta: { type: "thinking_delta", thinking: part.text },
+                        type: "content_block_delta",
                     });
                 } else if (part.text) {
                     // Regular text content
                     if (streamState.thinkingBlockStarted && !streamState.thinkingBlockStopped) {
                         events.push({
-                            type: "content_block_stop",
                             index: streamState.thinkingBlockIndex,
+                            type: "content_block_stop",
                         });
                         streamState.thinkingBlockStopped = true;
                     }
                     if (!streamState.textBlockStarted) {
                         events.push({
-                            type: "content_block_start",
+                            content_block: { text: "", type: "text" },
                             index: streamState.contentBlockIndex,
-                            content_block: { type: "text", text: "" },
+                            type: "content_block_start",
                         });
                         streamState.textBlockStarted = true;
                         streamState.textBlockIndex = streamState.contentBlockIndex;
                         streamState.contentBlockIndex++;
                     }
                     events.push({
-                        type: "content_block_delta",
+                        delta: { text: part.text, type: "text_delta" },
                         index: streamState.textBlockIndex,
-                        delta: { type: "text_delta", text: part.text },
+                        type: "content_block_delta",
                     });
+                } else if (part.inlineData) {
+                    // Image output - convert to markdown image format for streaming
+                    // Close thinking block if open
+                    if (streamState.thinkingBlockStarted && !streamState.thinkingBlockStopped) {
+                        events.push({
+                            index: streamState.thinkingBlockIndex,
+                            type: "content_block_stop",
+                        });
+                        streamState.thinkingBlockStopped = true;
+                    }
+                    // Start text block if not started
+                    if (!streamState.textBlockStarted) {
+                        events.push({
+                            content_block: { text: "", type: "text" },
+                            index: streamState.contentBlockIndex,
+                            type: "content_block_start",
+                        });
+                        streamState.textBlockStarted = true;
+                        streamState.textBlockIndex = streamState.contentBlockIndex;
+                        streamState.contentBlockIndex++;
+                    }
+                    // Send image as markdown text delta
+                    const imageMarkdown = `![Generated Image](data:${part.inlineData.mimeType};base64,${part.inlineData.data})`;
+                    events.push({
+                        delta: { text: imageMarkdown, type: "text_delta" },
+                        index: streamState.textBlockIndex,
+                        type: "content_block_delta",
+                    });
+                    this.logger.info("[Adapter] Successfully parsed image from streaming response chunk.");
                 } else if (part.functionCall) {
                     // Tool use
                     const toolUseId = `toolu_${this._generateRequestId()}`;
                     events.push({
-                        type: "content_block_start",
-                        index: streamState.contentBlockIndex,
                         content_block: {
-                            type: "tool_use",
                             id: toolUseId,
-                            name: part.functionCall.name,
                             input: {},
+                            name: part.functionCall.name,
+                            type: "tool_use",
                         },
+                        index: streamState.contentBlockIndex,
+                        type: "content_block_start",
                     });
                     events.push({
-                        type: "content_block_delta",
-                        index: streamState.contentBlockIndex,
                         delta: {
-                            type: "input_json_delta",
                             partial_json: JSON.stringify(part.functionCall.args || {}),
+                            type: "input_json_delta",
                         },
+                        index: streamState.contentBlockIndex,
+                        type: "content_block_delta",
                     });
                     events.push({
-                        type: "content_block_stop",
                         index: streamState.contentBlockIndex,
+                        type: "content_block_stop",
                     });
                     streamState.contentBlockIndex++;
                     streamState.hasToolUse = true;
@@ -1577,15 +1740,15 @@ class FormatConverter {
             // Close any open blocks
             if (streamState.textBlockStarted && !streamState.textBlockStopped) {
                 events.push({
-                    type: "content_block_stop",
                     index: streamState.textBlockIndex,
+                    type: "content_block_stop",
                 });
                 streamState.textBlockStopped = true;
             }
             if (streamState.thinkingBlockStarted && !streamState.thinkingBlockStopped) {
                 events.push({
-                    type: "content_block_stop",
                     index: streamState.thinkingBlockIndex,
+                    type: "content_block_stop",
                 });
                 streamState.thinkingBlockStopped = true;
             }
@@ -1601,13 +1764,13 @@ class FormatConverter {
             }
 
             events.push({
-                type: "message_delta",
                 delta: {
                     stop_reason: stopReason,
                     stop_sequence: null,
                 },
+                type: "message_delta",
                 usage: {
-                    output_tokens: streamState.outputTokens,
+                    output_tokens: streamState.outputTokens || 0,
                 },
             });
 
@@ -1631,16 +1794,17 @@ class FormatConverter {
 
         if (!candidate) {
             return {
+                content: [{ text: "", type: "text" }],
                 id: messageId,
-                type: "message",
-                role: "assistant",
-                content: [{ type: "text", text: "" }],
                 model: modelName,
+                role: "assistant",
                 stop_reason: "end_turn",
                 stop_sequence: null,
+                type: "message",
                 usage: {
-                    input_tokens: usage.promptTokenCount || 0,
-                    output_tokens: usage.candidatesTokenCount || 0,
+                    input_tokens: (usage.promptTokenCount || 0) + (usage.toolUsePromptTokenCount || 0),
+                    // Match OpenAI logic: sum candidates tokens + thoughts tokens
+                    output_tokens: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0),
                 },
             };
         }
@@ -1651,27 +1815,27 @@ class FormatConverter {
             for (const part of candidate.content.parts) {
                 if (part.thought === true && part.text) {
                     content.push({
-                        type: "thinking",
                         thinking: part.text,
+                        type: "thinking",
                     });
                 } else if (part.text) {
                     content.push({
-                        type: "text",
                         text: part.text,
+                        type: "text",
                     });
                 } else if (part.inlineData) {
                     // Image output - convert to base64 format
                     content.push({
-                        type: "text",
                         text: `![Generated Image](data:${part.inlineData.mimeType};base64,${part.inlineData.data})`,
+                        type: "text",
                     });
                 } else if (part.functionCall) {
                     hasToolUse = true;
                     content.push({
-                        type: "tool_use",
                         id: `toolu_${this._generateRequestId()}`,
-                        name: part.functionCall.name,
                         input: part.functionCall.args || {},
+                        name: part.functionCall.name,
+                        type: "tool_use",
                     });
                 }
             }
@@ -1688,16 +1852,17 @@ class FormatConverter {
         }
 
         return {
+            content: content.length > 0 ? content : [{ text: "", type: "text" }],
             id: messageId,
-            type: "message",
-            role: "assistant",
-            content: content.length > 0 ? content : [{ type: "text", text: "" }],
             model: modelName,
+            role: "assistant",
             stop_reason: stopReason,
             stop_sequence: null,
+            type: "message",
             usage: {
-                input_tokens: usage.promptTokenCount || 0,
-                output_tokens: usage.candidatesTokenCount || 0,
+                input_tokens: (usage.promptTokenCount || 0) + (usage.toolUsePromptTokenCount || 0),
+                // Match OpenAI logic: sum candidates tokens + thoughts tokens
+                output_tokens: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0),
             },
         };
     }

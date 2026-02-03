@@ -477,6 +477,14 @@ class RequestHandler {
         if (this.browserManager) {
             this.browserManager.notifyUserActivity();
         }
+
+        res.on("close", () => {
+            if (!res.writableEnded) {
+                this.logger.warn(`[Request] Client closed request #${requestId} connection prematurely.`);
+                this._cancelBrowserRequest(requestId);
+            }
+        });
+
         const isOpenAIStream = req.body.stream === true;
         const systemStreamMode = this.serverSystem.streamingMode;
         const useRealStream = isOpenAIStream && systemStreamMode === "real";
@@ -526,7 +534,7 @@ class RequestHandler {
 
                 if (initialMessage.event_type === "error") {
                     this.logger.error(
-                        `[Adapter] Received error from browser, will trigger switching logic. Status code: ${initialMessage.status}, message: ${initialMessage.message}`
+                        `[Request] Received error from browser, will trigger switching logic. Status code: ${initialMessage.status}, message: ${initialMessage.message}`
                     );
 
                     // Send standard HTTP error response
@@ -555,7 +563,7 @@ class RequestHandler {
                     Connection: "keep-alive",
                     "Content-Type": "text/event-stream",
                 });
-                this.logger.info(`[Adapter] OpenAI streaming response (Real Mode) started...`);
+                this.logger.info(`[Request] OpenAI streaming response (Real Mode) started...`);
                 await this._streamOpenAIResponse(messageQueue, res, model);
             } else {
                 // OpenAI Fake Stream / Non-Stream mode
@@ -617,15 +625,27 @@ class RequestHandler {
                         // Clear keep-alive timer as we are about to send real data
                         if (connectionMaintainer) clearTimeout(connectionMaintainer);
 
-                        this.logger.info(`[Adapter] OpenAI streaming response (Fake Mode) started...`);
+                        this.logger.info(`[Request] OpenAI streaming response (Fake Mode) started...`);
                         let fullBody = "";
-                        let streaming = true;
-                        while (streaming) {
+                        // eslint-disable-next-line no-constant-condition
+                        while (true) {
                             const message = await messageQueue.dequeue();
                             if (message.type === "STREAM_END") {
-                                streaming = false;
                                 break;
                             }
+
+                            if (message.event_type === "error") {
+                                this.logger.error(
+                                    `[Request] Error received during OpenAI fake stream: ${message.message}`
+                                );
+                                if (!res.writableEnded) {
+                                    res.write(
+                                        `data: ${JSON.stringify({ error: { code: 500, message: message.message, type: "api_error" } })}\n\n`
+                                    );
+                                }
+                                break;
+                            }
+
                             if (message.data) fullBody += message.data;
                         }
                         const streamState = {};
@@ -636,7 +656,7 @@ class RequestHandler {
                         );
                         if (translatedChunk) res.write(translatedChunk);
                         res.write("data: [DONE]\n\n");
-                        this.logger.info("[Adapter] Fake mode: Complete content sent at once.");
+                        this.logger.info("[Request] Fake mode: Complete content sent at once.");
                     } else {
                         // Non-stream
                         await this._sendOpenAINonStreamResponse(messageQueue, res, model);
@@ -677,14 +697,22 @@ class RequestHandler {
         if (this.authSwitcher.isSystemBusy) {
             const ready = await this._waitForSystemReady();
             if (!ready) {
-                return this._sendClaudeErrorResponse(res, 503, "overloaded_error",
-                    "Server undergoing internal maintenance, please try again later.");
+                return this._sendClaudeErrorResponse(
+                    res,
+                    503,
+                    "overloaded_error",
+                    "Server undergoing internal maintenance, please try again later."
+                );
             }
             if (!this.connectionRegistry.hasActiveConnections()) {
                 const connectionReady = await this._waitForConnection(10000);
                 if (!connectionReady) {
-                    return this._sendClaudeErrorResponse(res, 503, "overloaded_error",
-                        "Service temporarily unavailable: Connection not established.");
+                    return this._sendClaudeErrorResponse(
+                        res,
+                        503,
+                        "overloaded_error",
+                        "Service temporarily unavailable: Connection not established."
+                    );
                 }
             }
         }
@@ -692,6 +720,13 @@ class RequestHandler {
         if (this.browserManager) {
             this.browserManager.notifyUserActivity();
         }
+
+        res.on("close", () => {
+            if (!res.writableEnded) {
+                this.logger.warn(`[Request] Client closed request #${requestId} connection prematurely.`);
+                this._cancelBrowserRequest(requestId);
+            }
+        });
 
         const isClaudeStream = req.body.stream === true;
         const systemStreamMode = this.serverSystem.streamingMode;
@@ -718,8 +753,7 @@ class RequestHandler {
             model = result.cleanModelName;
         } catch (error) {
             this.logger.error(`[Adapter] Claude request translation failed: ${error.message}`);
-            return this._sendClaudeErrorResponse(res, 400, "invalid_request_error",
-                "Invalid Claude request format.");
+            return this._sendClaudeErrorResponse(res, 400, "invalid_request_error", "Invalid Claude request format.");
         }
 
         const googleEndpoint = useRealStream ? "streamGenerateContent" : "generateContent";
@@ -743,10 +777,14 @@ class RequestHandler {
 
                 if (initialMessage.event_type === "error") {
                     this.logger.error(
-                        `[Adapter] Received error from browser for Claude request. Status: ${initialMessage.status}`
+                        `[Request] Received error from browser, will trigger switching logic. Status code: ${initialMessage.status}, message: ${initialMessage.message}`
                     );
-                    this._sendClaudeErrorResponse(res, initialMessage.status || 500, "api_error",
-                        initialMessage.message);
+                    this._sendClaudeErrorResponse(
+                        res,
+                        initialMessage.status || 500,
+                        "api_error",
+                        initialMessage.message
+                    );
                     if (!this._isConnectionResetError(initialMessage)) {
                         await this.authSwitcher.handleRequestFailureAndSwitch(initialMessage, null);
                     }
@@ -763,7 +801,7 @@ class RequestHandler {
                     Connection: "keep-alive",
                     "Content-Type": "text/event-stream",
                 });
-                this.logger.info(`[Adapter] Claude streaming response (Real Mode) started...`);
+                this.logger.info(`[Request] Claude streaming response (Real Mode) started...`);
                 await this._streamClaudeResponse(messageQueue, res, model);
             } else {
                 // Claude Fake Stream / Non-Stream mode
@@ -793,8 +831,12 @@ class RequestHandler {
 
                     if (!result.success) {
                         if (connectionMaintainer) clearTimeout(connectionMaintainer);
-                        this._sendClaudeErrorResponse(res, result.error.status || 500, "api_error",
-                            result.error.message);
+                        this._sendClaudeErrorResponse(
+                            res,
+                            result.error.status || 500,
+                            "api_error",
+                            result.error.message
+                        );
                         if (!this._isConnectionResetError(result.error)) {
                             await this.authSwitcher.handleRequestFailureAndSwitch(result.error, null);
                         }
@@ -817,15 +859,33 @@ class RequestHandler {
                         }
                         if (connectionMaintainer) clearTimeout(connectionMaintainer);
 
-                        this.logger.info(`[Adapter] Claude streaming response (Fake Mode) started...`);
+                        this.logger.info(`[Request] Claude streaming response (Fake Mode) started...`);
                         let fullBody = "";
-                        let streaming = true;
-                        while (streaming) {
+                        // eslint-disable-next-line no-constant-condition
+                        while (true) {
                             const message = await messageQueue.dequeue();
                             if (message.type === "STREAM_END") {
-                                streaming = false;
                                 break;
                             }
+
+                            if (message.event_type === "error") {
+                                this.logger.error(
+                                    `[Request] Error received during Claude fake stream: ${message.message}`
+                                );
+                                if (!res.writableEnded) {
+                                    res.write(
+                                        `event: error\ndata: ${JSON.stringify({
+                                            error: {
+                                                message: message.message,
+                                                type: "api_error",
+                                            },
+                                            type: "error",
+                                        })}\n\n`
+                                    );
+                                }
+                                break;
+                            }
+
                             if (message.data) fullBody += message.data;
                         }
                         const streamState = {};
@@ -835,7 +895,7 @@ class RequestHandler {
                             streamState
                         );
                         if (translatedChunk) res.write(translatedChunk);
-                        this.logger.info("[Adapter] Claude fake mode: Complete content sent at once.");
+                        this.logger.info("[Request] Claude fake mode: Complete content sent at once.");
                     } else {
                         // Non-stream
                         await this._sendClaudeNonStreamResponse(messageQueue, res, model);
@@ -866,15 +926,33 @@ class RequestHandler {
 
     async _streamClaudeResponse(messageQueue, res, model) {
         const streamState = {};
-        let streaming = true;
 
-        while (streaming) {
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
             const message = await messageQueue.dequeue(30000);
+
             if (message.type === "STREAM_END") {
                 this.logger.info("[Request] Claude stream end signal received.");
-                streaming = false;
                 break;
             }
+
+            if (message.event_type === "error") {
+                this.logger.error(`[Request] Error received during Claude stream: ${message.message}`);
+                // Attempt to send error event to client if headers allowed, then close
+                if (!res.writableEnded) {
+                    res.write(
+                        `event: error\ndata: ${JSON.stringify({
+                            error: {
+                                message: message.message,
+                                type: "api_error",
+                            },
+                            type: "error",
+                        })}\n\n`
+                    );
+                }
+                break;
+            }
+
             if (message.data) {
                 const claudeChunk = this.formatConverter.translateGoogleToClaudeStream(
                     message.data,
@@ -898,6 +976,13 @@ class RequestHandler {
                 receiving = false;
                 break;
             }
+
+            if (message.event_type === "error") {
+                this.logger.error(`[Adapter] Error during Claude non-stream conversion: ${message.message}`);
+                this._sendClaudeErrorResponse(res, 500, "api_error", message.message);
+                return;
+            }
+
             if (message.event_type === "chunk" && message.data) {
                 fullBody += message.data;
             }
@@ -908,20 +993,24 @@ class RequestHandler {
             const claudeResponse = this.formatConverter.convertGoogleToClaudeNonStream(googleResponse, model);
             res.type("application/json").send(JSON.stringify(claudeResponse));
         } catch (e) {
-            this.logger.error(`[Request] Failed to parse response for Claude: ${e.message}`);
+            this.logger.error(`[Adapter] Failed to parse response for Claude: ${e.message}`);
             this._sendClaudeErrorResponse(res, 500, "api_error", "Failed to parse backend response");
         }
     }
 
     _sendClaudeErrorResponse(res, status, errorType, message) {
         if (!res.headersSent) {
-            res.status(status).type("application/json").send(JSON.stringify({
-                type: "error",
-                error: {
-                    type: errorType,
-                    message: message,
-                },
-            }));
+            res.status(status)
+                .type("application/json")
+                .send(
+                    JSON.stringify({
+                        error: {
+                            message,
+                            type: errorType,
+                        },
+                        type: "error",
+                    })
+                );
         }
     }
 
@@ -1017,13 +1106,19 @@ class RequestHandler {
 
             // Read all data chunks until STREAM_END to handle potential fragmentation
             let fullData = "";
-            let streaming = true;
-            while (streaming) {
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
                 const message = await messageQueue.dequeue(); // 5 min timeout
                 if (message.type === "STREAM_END") {
-                    streaming = false;
                     break;
                 }
+
+                if (message.event_type === "error") {
+                    this.logger.error(`[Request] Error received during Gemini pseudo-stream: ${message.message}`);
+                    this._sendErrorChunkToClient(res, message.message);
+                    break;
+                }
+
                 if (message.data) {
                     fullData += message.data;
                 }
@@ -1168,14 +1263,24 @@ class RequestHandler {
         this.logger.info("[Request] Starting streaming transmission...");
         try {
             let lastChunk = "";
-            let streaming = true;
-            while (streaming) {
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
                 const dataMessage = await messageQueue.dequeue(30000);
                 if (dataMessage.type === "STREAM_END") {
                     this.logger.info("[Request] Received stream end signal.");
-                    streaming = false;
                     break;
                 }
+
+                if (dataMessage.event_type === "error") {
+                    this.logger.error(`[Request] Error received during Gemini real stream: ${dataMessage.message}`);
+                    if (!res.writableEnded) {
+                        res.write(
+                            `data: ${JSON.stringify({ error: { code: 500, message: dataMessage.message, status: "INTERNAL_ERROR" } })}\n\n`
+                        );
+                    }
+                    break;
+                }
+
                 if (dataMessage.data) {
                     res.write(dataMessage.data);
                     lastChunk = dataMessage.data;
@@ -1248,6 +1353,13 @@ class RequestHandler {
                     receiving = false;
                     break;
                 }
+
+                if (message.event_type === "error") {
+                    this.logger.error(`[Request] Error received during Gemini non-stream: ${message.message}`);
+                    this._sendErrorResponse(res, 500, message.message);
+                    return;
+                }
+
                 if (message.event_type === "chunk" && message.data) {
                     chunks.push(Buffer.from(message.data));
                 }
@@ -1397,16 +1509,27 @@ class RequestHandler {
 
     async _streamOpenAIResponse(messageQueue, res, model) {
         const streamState = {};
-        let streaming = true;
 
-        while (streaming) {
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
             const message = await messageQueue.dequeue(30000);
             if (message.type === "STREAM_END") {
-                this.logger.info("[Request] Stream end signal received.");
+                this.logger.info("[Request] OpenAI stream end signal received.");
                 res.write("data: [DONE]\n\n");
-                streaming = false;
                 break;
             }
+
+            if (message.event_type === "error") {
+                this.logger.error(`[Request] Error received during OpenAI stream: ${message.message}`);
+                // Attempt to send error event to client if headers allowed, then close
+                if (!res.writableEnded) {
+                    res.write(
+                        `data: ${JSON.stringify({ error: { code: 500, message: message.message, type: "api_error" } })}\n\n`
+                    );
+                }
+                break;
+            }
+
             if (message.data) {
                 const openAIChunk = this.formatConverter.translateGoogleToOpenAIStream(
                     message.data,
@@ -1426,10 +1549,17 @@ class RequestHandler {
         while (receiving) {
             const message = await messageQueue.dequeue();
             if (message.type === "STREAM_END") {
-                this.logger.info("[Request] Received end signal.");
+                this.logger.info("[Request] OpenAI received end signal.");
                 receiving = false;
                 break;
             }
+
+            if (message.event_type === "error") {
+                this.logger.error(`[Adapter] Error during OpenAI non-stream conversion: ${message.message}`);
+                this._sendErrorResponse(res, 500, message.message);
+                return;
+            }
+
             if (message.event_type === "chunk" && message.data) {
                 fullBody += message.data;
             }
@@ -1441,7 +1571,7 @@ class RequestHandler {
             const openAIResponse = this.formatConverter.convertGoogleToOpenAINonStream(googleResponse, model);
             res.type("application/json").send(JSON.stringify(openAIResponse));
         } catch (e) {
-            this.logger.error(`[Request] Failed to parse response: ${e.message}`);
+            this.logger.error(`[Adapter] Failed to parse response for OpenAI: ${e.message}`);
             this._sendErrorResponse(res, 500, "Failed to parse backend response");
         }
     }
