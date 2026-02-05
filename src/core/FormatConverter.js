@@ -209,7 +209,7 @@ class FormatConverter {
 
             if (isResponseSchema) {
                 // For Structured Outputs: stricter filtering of metadata that causes 400 errors
-                unsupportedKeys.push("title", "default", "examples", "$defs", "id");
+                unsupportedKeys.push("default", "examples", "$defs", "id");
             }
 
             // ONLY Filter metadata keywords if NOT a property name (isProperties is false)
@@ -336,10 +336,6 @@ class FormatConverter {
 
         // [DEBUG] Log incoming messages for troubleshooting
         this.logger.debug(`[Adapter] Debug: incoming OpenAI Body = ${JSON.stringify(openaiBody, null, 2)}`);
-        // [DEBUG] Log original OpenAI tools
-        if (openaiBody.tools && openaiBody.tools.length > 0) {
-            this.logger.debug(`[Adapter] Debug: original OpenAI tools = ${JSON.stringify(openaiBody.tools, null, 2)}`);
-        }
 
         let systemInstruction = null;
         const googleContents = [];
@@ -562,9 +558,6 @@ class FormatConverter {
         flushToolParts();
 
         // Build Google request
-        this.logger.debug(`[Adapter] Debug: googleContents length = ${googleContents.length}`);
-        // [DEBUG] Log full googleContents for troubleshooting thoughtSignature issue
-        this.logger.debug(`[Adapter] Debug: googleContents = ${JSON.stringify(googleContents, null, 2)}`);
         const googleRequest = {
             contents: googleContents,
             ...(systemInstruction && {
@@ -764,6 +757,20 @@ class FormatConverter {
             }
         }
 
+        this._finalizeGoogleRequest(googleRequest);
+        this.logger.info("[Adapter] OpenAI to Google translation complete.");
+        return { cleanModelName, googleRequest };
+    }
+
+    /**
+     * Common final processing for Gemini requests:
+     * 1. Inject force features (Search, URL Context)
+     * 2. Apply safety settings
+     * 3. Log final request body
+     * @param {object} googleRequest - The Gemini request object to finalize
+     * @private
+     */
+    _finalizeGoogleRequest(googleRequest) {
         // Force web search and URL context
         if (this.serverSystem.forceWebSearch || this.serverSystem.forceUrlContext) {
             if (!googleRequest.tools) {
@@ -803,14 +810,7 @@ class FormatConverter {
             { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
         ];
 
-        // [DEBUG] Log full request body for troubleshooting 400 errors
-        if (googleRequest.tools && googleRequest.tools.length > 0) {
-            this.logger.debug(
-                `[Adapter] Debug: Sanitized Openai tools = ${JSON.stringify(googleRequest.tools, null, 2)}`
-            );
-        }
-        this.logger.info("[Adapter] OpenAI to Google translation complete.");
-        return { cleanModelName, googleRequest };
+        this.logger.debug(`[Adapter] Debug: Final Gemini Request = ${JSON.stringify(googleRequest, null, 2)}`);
     }
 
     /**
@@ -1376,10 +1376,6 @@ class FormatConverter {
         // Flush remaining tool parts
         flushToolParts();
 
-        // [DEBUG] Log full content construction
-        this.logger.debug(`[Adapter] Debug: googleContents length = ${googleContents.length}`);
-        this.logger.debug(`[Adapter] Debug: googleContents = ${JSON.stringify(googleContents, null, 2)}`);
-
         // Build Google request
         const googleRequest = {
             contents: googleContents,
@@ -1478,7 +1474,6 @@ class FormatConverter {
 
         // Convert Claude tools to Gemini functionDeclarations
         if (claudeBody.tools && Array.isArray(claudeBody.tools) && claudeBody.tools.length > 0) {
-            this.logger.debug(`[Adapter] Debug: original Claude tools = ${JSON.stringify(claudeBody.tools, null, 2)}`);
             let hasWebSearchTool = false;
             let hasUrlContextTool = false;
             const functionDeclarations = [];
@@ -1562,34 +1557,8 @@ class FormatConverter {
             );
         }
 
-        // Force web search and URL context
-        if (this.serverSystem.forceWebSearch || this.serverSystem.forceUrlContext) {
-            if (!googleRequest.tools) googleRequest.tools = [];
-            if (this.serverSystem.forceWebSearch && !googleRequest.tools.some(t => t.googleSearch)) {
-                googleRequest.tools.push({ googleSearch: {} });
-            }
-            if (this.serverSystem.forceUrlContext && !googleRequest.tools.some(t => t.urlContext)) {
-                googleRequest.tools.push({ urlContext: {} });
-            }
-        }
-
-        // Safety settings
-        googleRequest.safetySettings = [
-            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-        ];
-
+        this._finalizeGoogleRequest(googleRequest);
         this.logger.info("[Adapter] Claude to Google translation complete.");
-
-        // [DEBUG] Log full request body for troubleshooting
-        if (googleRequest.tools && googleRequest.tools.length > 0) {
-            this.logger.debug(
-                `[Adapter] Debug: Converted Gemini tools = ${JSON.stringify(googleRequest.tools, null, 2)}`
-            );
-        }
-
         return { cleanModelName, googleRequest };
     }
 
