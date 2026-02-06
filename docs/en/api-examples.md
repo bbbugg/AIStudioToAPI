@@ -1,6 +1,6 @@
 # API Usage Examples
 
-This document provides simple API usage examples, including both OpenAI-compatible API and Gemini native API formats.
+This document provides simple API usage examples, including OpenAI-compatible API, Gemini native API, and Anthropic-compatible API formats.
 
 ## 🤖 OpenAI-Compatible API
 
@@ -38,7 +38,7 @@ curl -X POST http://localhost:7860/v1/chat/completions \
   }'
 ```
 
-### 🖼️ Generate Image
+### 🖼️ Generate Image [Official Docs](https://ai.google.dev/gemini-api/docs/image-generation)
 
 ```bash
 curl -X POST http://localhost:7860/v1/chat/completions \
@@ -114,7 +114,7 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-lite:streamGen
   }'
 ```
 
-### 🖼️ Generate Image
+### 🖼️ Generate Image [Official Docs](https://ai.google.dev/gemini-api/docs/image-generation)
 
 ```bash
 curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-image:generateContent \
@@ -154,7 +154,7 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-2.5-flash-image:streamGe
   }'
 ```
 
-### 🎨 Imagen (Image Generation)
+### 🎨 Imagen (Image Generation) [Official Docs](https://ai.google.dev/gemini-api/docs/imagen)
 
 Use the `imagen` series models to generate images through the `:predict` endpoint.
 
@@ -198,7 +198,7 @@ curl -X POST http://localhost:7860/v1beta/models/imagen-4.0-generate-001:predict
 
 > 💡 **Tip**: Imagen responses return base64-encoded image data. Each generated image will be included in the `predictions` array.
 
-### 🎤 TTS (Text-to-Speech)
+### 🎤 TTS (Text-to-Speech) [Official Docs](https://ai.google.dev/gemini-api/docs/speech-generation)
 
 #### Basic TTS (Default Voice)
 
@@ -361,5 +361,45 @@ curl -X POST http://localhost:7860/v1beta/models/gemini-embedding-001:batchEmbed
         }
       }
     ]
+  }'
+```
+
+## 👤 Anthropic Compatible API
+
+```bash
+curl -X POST http://localhost:7860/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-api-key-1" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "gemini-2.5-flash-lite",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello, how are you?"
+      }
+    ],
+    "stream": false
+  }'
+```
+
+### 🌊 Streaming Response
+
+```bash
+curl -X POST http://localhost:7860/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-api-key-1" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "gemini-2.5-flash-lite",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Write a poem about autumn"
+      }
+    ],
+    "stream": true
   }'
 ```

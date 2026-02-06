@@ -399,6 +399,30 @@ class RequestProcessor {
                         }
                     }
 
+                    // --- Module 4: Gemini 2 JSON Mode Tool Filtering ---
+                    // If model starts with gemini-2 and response format is JSON, remove tools/toolConfig
+                    // This prevents 400 errors as some Gemini 2 variants don't support combined Tool + Structured Output
+                    const isGemini2 = requestSpec.path.match(/\/models\/gemini-2/);
+                    const isJsonMode =
+                        bodyObj.generationConfig?.responseMimeType === "application/json" ||
+                        bodyObj.generationConfig?.response_mime_type === "application/json";
+
+                    if (isGemini2 && isJsonMode) {
+                        const incompatibleKeys = ["toolConfig", "tool_config", "toolChoice", "tools"];
+                        let keysRemoved = 0;
+                        incompatibleKeys.forEach(key => {
+                            if (Object.prototype.hasOwnProperty.call(bodyObj, key)) {
+                                delete bodyObj[key];
+                                keysRemoved++;
+                            }
+                        });
+                        if (keysRemoved > 0) {
+                            Logger.output(
+                                `Gemini 2/2.5 + JSON mode detected, automatically filtering tool parameter to prevent API error`
+                            );
+                        }
+                    }
+
                     // adapt gemini 3 pro preview
                     // if raise `400 INVALID_ARGUMENT`, try to delete `thinkingLevel`
                     // if (bodyObj.generationConfig?.thinkingConfig?.thinkingLevel) {

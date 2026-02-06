@@ -56,6 +56,27 @@ class RequestHandler {
         return this.authSwitcher.switchToSpecificAuth(targetIndex);
     }
 
+    async _waitForGraceReconnect(timeoutMs = 60000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            if (!this.connectionRegistry.isInGracePeriod() && !this.connectionRegistry.isReconnectingInProgress()) {
+                const connectionReady = await this._waitForConnection(10000);
+                return connectionReady;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return this.connectionRegistry.hasActiveConnections();
+    }
+
+    _isConnectionResetError(error) {
+        if (!error || !error.message) return false;
+        return (
+            error.message.includes("Queue closed") ||
+            error.message.includes("Queue is closed") ||
+            error.message.includes("Connection lost")
+        );
+    }
+
     /**
      * Wait for WebSocket connection to be established
      * @param {number} timeoutMs - Maximum time to wait in milliseconds
@@ -113,6 +134,19 @@ class RequestHandler {
      * @returns {boolean} true if recovery successful, false otherwise
      */
     async _handleBrowserRecovery(res) {
+        // If within grace period or lightweight reconnect is running, wait up to 60s for WebSocket reconnection
+        if (this.connectionRegistry.isInGracePeriod() || this.connectionRegistry.isReconnectingInProgress()) {
+            this.logger.info(
+                "[System] Waiting up to 60s for WebSocket reconnection (grace/reconnect in progress) before full recovery..."
+            );
+            const reconnected = await this._waitForGraceReconnect(60000);
+            if (reconnected) {
+                this.logger.info("[System] Connection restored, skipping recovery.");
+                return true;
+            }
+            this.logger.warn("[System] Reconnection wait expired, proceeding to recovery workflow.");
+        }
+
         // Wait for system to become ready if it's busy (someone else is starting/switching browser)
         if (this.authSwitcher.isSystemBusy) {
             const ready = await this._waitForSystemReady();
@@ -339,6 +373,7 @@ class RequestHandler {
                 });
                 this.needsSwitchingAfterRequest = false;
             }
+            if (!res.writableEnded) res.end();
         }
     }
 
@@ -405,6 +440,7 @@ class RequestHandler {
             this._handleRequestError(error, res);
         } finally {
             this.connectionRegistry.removeMessageQueue(requestId);
+            if (!res.writableEnded) res.end();
         }
     }
 
@@ -443,6 +479,14 @@ class RequestHandler {
         if (this.browserManager) {
             this.browserManager.notifyUserActivity();
         }
+
+        res.on("close", () => {
+            if (!res.writableEnded) {
+                this.logger.warn(`[Request] Client closed request #${requestId} connection prematurely.`);
+                this._cancelBrowserRequest(requestId);
+            }
+        });
+
         const isOpenAIStream = req.body.stream === true;
         const systemStreamMode = this.serverSystem.streamingMode;
         const useRealStream = isOpenAIStream && systemStreamMode === "real";
@@ -492,14 +536,20 @@ class RequestHandler {
 
                 if (initialMessage.event_type === "error") {
                     this.logger.error(
-                        `[Adapter] Received error from browser, will trigger switching logic. Status code: ${initialMessage.status}, message: ${initialMessage.message}`
+                        `[Request] Received error from browser, will trigger switching logic. Status code: ${initialMessage.status}, message: ${initialMessage.message}`
                     );
 
                     // Send standard HTTP error response
                     this._sendErrorResponse(res, initialMessage.status || 500, initialMessage.message);
 
-                    // Handle account switch without sending callback to client (response is closed)
-                    await this.authSwitcher.handleRequestFailureAndSwitch(initialMessage, null);
+                    // Avoid switching account if the error is just a connection reset
+                    if (!this._isConnectionResetError(initialMessage)) {
+                        await this.authSwitcher.handleRequestFailureAndSwitch(initialMessage, null);
+                    } else {
+                        this.logger.info(
+                            "[Request] Failure due to connection reset (Real Stream), skipping account switch."
+                        );
+                    }
                     return;
                 }
 
@@ -515,7 +565,7 @@ class RequestHandler {
                     Connection: "keep-alive",
                     "Content-Type": "text/event-stream",
                 });
-                this.logger.info(`[Adapter] OpenAI streaming response (Real Mode) started...`);
+                this.logger.info(`[Request] OpenAI streaming response (Real Mode) started...`);
                 await this._streamOpenAIResponse(messageQueue, res, model);
             } else {
                 // OpenAI Fake Stream / Non-Stream mode
@@ -549,8 +599,14 @@ class RequestHandler {
                         if (connectionMaintainer) clearTimeout(connectionMaintainer);
                         this._sendErrorResponse(res, result.error.status || 500, result.error.message);
 
-                        // Handle account switch without sending callback to client
-                        await this.authSwitcher.handleRequestFailureAndSwitch(result.error, null);
+                        // Avoid switching account if the error is just a connection reset
+                        if (!this._isConnectionResetError(result.error)) {
+                            await this.authSwitcher.handleRequestFailureAndSwitch(result.error, null);
+                        } else {
+                            this.logger.info(
+                                "[Request] Failure due to connection reset (OpenAI), skipping account switch."
+                            );
+                        }
                         return;
                     }
 
@@ -571,15 +627,27 @@ class RequestHandler {
                         // Clear keep-alive timer as we are about to send real data
                         if (connectionMaintainer) clearTimeout(connectionMaintainer);
 
-                        this.logger.info(`[Adapter] OpenAI streaming response (Fake Mode) started...`);
+                        this.logger.info(`[Request] OpenAI streaming response (Fake Mode) started...`);
                         let fullBody = "";
-                        let streaming = true;
-                        while (streaming) {
+                        // eslint-disable-next-line no-constant-condition
+                        while (true) {
                             const message = await messageQueue.dequeue();
                             if (message.type === "STREAM_END") {
-                                streaming = false;
                                 break;
                             }
+
+                            if (message.event_type === "error") {
+                                this.logger.error(
+                                    `[Request] Error received during OpenAI fake stream: ${message.message}`
+                                );
+                                if (!res.writableEnded) {
+                                    res.write(
+                                        `data: ${JSON.stringify({ error: { code: 500, message: message.message, type: "api_error" } })}\n\n`
+                                    );
+                                }
+                                break;
+                            }
+
                             if (message.data) fullBody += message.data;
                         }
                         const streamState = {};
@@ -590,7 +658,7 @@ class RequestHandler {
                         );
                         if (translatedChunk) res.write(translatedChunk);
                         res.write("data: [DONE]\n\n");
-                        this.logger.info("[Adapter] Fake mode: Complete content sent at once.");
+                        this.logger.info("[Request] Fake mode: Complete content sent at once.");
                     } else {
                         // Non-stream
                         await this._sendOpenAINonStreamResponse(messageQueue, res, model);
@@ -612,12 +680,496 @@ class RequestHandler {
                 });
                 this.needsSwitchingAfterRequest = false;
             }
+            if (!res.writableEnded) res.end();
+        }
+    }
+
+    // Process Claude API format requests
+    async processClaudeRequest(req, res) {
+        const requestId = this._generateRequestId();
+
+        // Check browser connection
+        if (!this.connectionRegistry.hasActiveConnections()) {
+            const recovered = await this._handleBrowserRecovery(res);
+            if (!recovered) return;
         }
 
-        if (!res.writableEnded) res.end();
+        // Wait for system to become ready if it's busy
+        if (this.authSwitcher.isSystemBusy) {
+            const ready = await this._waitForSystemReady();
+            if (!ready) {
+                return this._sendClaudeErrorResponse(
+                    res,
+                    503,
+                    "overloaded_error",
+                    "Server undergoing internal maintenance, please try again later."
+                );
+            }
+            if (!this.connectionRegistry.hasActiveConnections()) {
+                const connectionReady = await this._waitForConnection(10000);
+                if (!connectionReady) {
+                    return this._sendClaudeErrorResponse(
+                        res,
+                        503,
+                        "overloaded_error",
+                        "Service temporarily unavailable: Connection not established."
+                    );
+                }
+            }
+        }
+
+        if (this.browserManager) {
+            this.browserManager.notifyUserActivity();
+        }
+
+        res.on("close", () => {
+            if (!res.writableEnded) {
+                this.logger.warn(`[Request] Client closed request #${requestId} connection prematurely.`);
+                this._cancelBrowserRequest(requestId);
+            }
+        });
+
+        const isClaudeStream = req.body.stream === true;
+        const systemStreamMode = this.serverSystem.streamingMode;
+        const useRealStream = isClaudeStream && systemStreamMode === "real";
+
+        // Handle usage counting
+        const usageCount = this.authSwitcher.incrementUsageCount();
+        if (usageCount > 0) {
+            const rotationCountText =
+                this.config.switchOnUses > 0 ? `${usageCount}/${this.config.switchOnUses}` : `${usageCount}`;
+            this.logger.info(
+                `[Request] Claude generation request - account rotation count: ${rotationCountText} (Current account: ${this.currentAuthIndex})`
+            );
+            if (this.authSwitcher.shouldSwitchByUsage()) {
+                this.needsSwitchingAfterRequest = true;
+            }
+        }
+
+        // Translate Claude format to Google format
+        let googleBody, model;
+        try {
+            const result = await this.formatConverter.translateClaudeToGoogle(req.body);
+            googleBody = result.googleRequest;
+            model = result.cleanModelName;
+        } catch (error) {
+            this.logger.error(`[Adapter] Claude request translation failed: ${error.message}`);
+            return this._sendClaudeErrorResponse(res, 400, "invalid_request_error", "Invalid Claude request format.");
+        }
+
+        const googleEndpoint = useRealStream ? "streamGenerateContent" : "generateContent";
+        const proxyRequest = {
+            body: JSON.stringify(googleBody),
+            headers: { "Content-Type": "application/json" },
+            is_generative: true,
+            method: "POST",
+            path: `/v1beta/models/${model}:${googleEndpoint}`,
+            query_params: useRealStream ? { alt: "sse" } : {},
+            request_id: requestId,
+            streaming_mode: useRealStream ? "real" : "fake",
+        };
+
+        const messageQueue = this.connectionRegistry.createMessageQueue(requestId);
+
+        try {
+            if (useRealStream) {
+                this._forwardRequest(proxyRequest);
+                const initialMessage = await messageQueue.dequeue();
+
+                if (initialMessage.event_type === "error") {
+                    this.logger.error(
+                        `[Request] Received error from browser, will trigger switching logic. Status code: ${initialMessage.status}, message: ${initialMessage.message}`
+                    );
+                    this._sendClaudeErrorResponse(
+                        res,
+                        initialMessage.status || 500,
+                        "api_error",
+                        initialMessage.message
+                    );
+                    if (!this._isConnectionResetError(initialMessage)) {
+                        await this.authSwitcher.handleRequestFailureAndSwitch(initialMessage, null);
+                    }
+                    return;
+                }
+
+                if (this.authSwitcher.failureCount > 0) {
+                    this.logger.info(`✅ [Auth] Claude request successful - failure count reset to 0`);
+                    this.authSwitcher.failureCount = 0;
+                }
+
+                res.status(200).set({
+                    "Cache-Control": "no-cache",
+                    Connection: "keep-alive",
+                    "Content-Type": "text/event-stream",
+                });
+                this.logger.info(`[Request] Claude streaming response (Real Mode) started...`);
+                await this._streamClaudeResponse(messageQueue, res, model);
+            } else {
+                // Claude Fake Stream / Non-Stream mode
+                let connectionMaintainer;
+                if (isClaudeStream) {
+                    const scheduleNextKeepAlive = () => {
+                        const randomInterval = 12000 + Math.floor(Math.random() * 6000);
+                        connectionMaintainer = setTimeout(() => {
+                            if (!res.headersSent) {
+                                res.status(200).set({
+                                    "Cache-Control": "no-cache",
+                                    Connection: "keep-alive",
+                                    "Content-Type": "text/event-stream",
+                                });
+                            }
+                            if (!res.writableEnded) {
+                                res.write("event: ping\ndata: {}\n\n");
+                                scheduleNextKeepAlive();
+                            }
+                        }, randomInterval);
+                    };
+                    scheduleNextKeepAlive();
+                }
+
+                try {
+                    const result = await this._executeRequestWithRetries(proxyRequest, messageQueue);
+
+                    if (!result.success) {
+                        if (connectionMaintainer) clearTimeout(connectionMaintainer);
+                        this._sendClaudeErrorResponse(
+                            res,
+                            result.error.status || 500,
+                            "api_error",
+                            result.error.message
+                        );
+                        if (!this._isConnectionResetError(result.error)) {
+                            await this.authSwitcher.handleRequestFailureAndSwitch(result.error, null);
+                        }
+                        return;
+                    }
+
+                    if (this.authSwitcher.failureCount > 0) {
+                        this.logger.info(`✅ [Auth] Claude request successful - failure count reset to 0`);
+                        this.authSwitcher.failureCount = 0;
+                    }
+
+                    if (isClaudeStream) {
+                        // Fake stream
+                        if (!res.headersSent) {
+                            res.status(200).set({
+                                "Cache-Control": "no-cache",
+                                Connection: "keep-alive",
+                                "Content-Type": "text/event-stream",
+                            });
+                        }
+                        if (connectionMaintainer) clearTimeout(connectionMaintainer);
+
+                        this.logger.info(`[Request] Claude streaming response (Fake Mode) started...`);
+                        let fullBody = "";
+                        // eslint-disable-next-line no-constant-condition
+                        while (true) {
+                            const message = await messageQueue.dequeue();
+                            if (message.type === "STREAM_END") {
+                                break;
+                            }
+
+                            if (message.event_type === "error") {
+                                this.logger.error(
+                                    `[Request] Error received during Claude fake stream: ${message.message}`
+                                );
+                                if (!res.writableEnded) {
+                                    res.write(
+                                        `event: error\ndata: ${JSON.stringify({
+                                            error: {
+                                                message: message.message,
+                                                type: "api_error",
+                                            },
+                                            type: "error",
+                                        })}\n\n`
+                                    );
+                                }
+                                break;
+                            }
+
+                            if (message.data) fullBody += message.data;
+                        }
+                        const streamState = {};
+                        const translatedChunk = this.formatConverter.translateGoogleToClaudeStream(
+                            fullBody,
+                            model,
+                            streamState
+                        );
+                        if (translatedChunk) res.write(translatedChunk);
+                        this.logger.info("[Request] Claude fake mode: Complete content sent at once.");
+                    } else {
+                        // Non-stream
+                        await this._sendClaudeNonStreamResponse(messageQueue, res, model);
+                    }
+                } finally {
+                    if (connectionMaintainer) clearTimeout(connectionMaintainer);
+                }
+            }
+        } catch (error) {
+            this._handleClaudeRequestError(error, res);
+        } finally {
+            this.connectionRegistry.removeMessageQueue(requestId);
+            if (this.needsSwitchingAfterRequest) {
+                this.logger.info(
+                    `[Auth] Rotation count reached switching threshold, will automatically switch account in background...`
+                );
+                this.authSwitcher.switchToNextAuth().catch(err => {
+                    this.logger.error(`[Auth] Background account switching task failed: ${err.message}`);
+                });
+                this.needsSwitchingAfterRequest = false;
+            }
+            if (!res.writableEnded) res.end();
+        }
+    }
+
+    // Process Claude count tokens request
+    async processClaudeCountTokens(req, res) {
+        const requestId = this._generateRequestId();
+
+        // Check browser connection
+        if (!this.connectionRegistry.hasActiveConnections()) {
+            const recovered = await this._handleBrowserRecovery(res);
+            if (!recovered) return;
+        }
+
+        // Wait for system to become ready if it's busy
+        if (this.authSwitcher.isSystemBusy) {
+            const ready = await this._waitForSystemReady();
+            if (!ready) {
+                return this._sendClaudeErrorResponse(
+                    res,
+                    503,
+                    "overloaded_error",
+                    "Server undergoing internal maintenance, please try again later."
+                );
+            }
+            if (!this.connectionRegistry.hasActiveConnections()) {
+                const connectionReady = await this._waitForConnection(10000);
+                if (!connectionReady) {
+                    return this._sendClaudeErrorResponse(
+                        res,
+                        503,
+                        "overloaded_error",
+                        "Service temporarily unavailable: Connection not established."
+                    );
+                }
+            }
+        }
+
+        if (this.browserManager) {
+            this.browserManager.notifyUserActivity();
+        }
+
+        res.on("close", () => {
+            if (!res.writableEnded) {
+                this.logger.warn(`[Request] Client closed request #${requestId} connection prematurely.`);
+                this._cancelBrowserRequest(requestId);
+            }
+        });
+
+        // Translate Claude format to Google format
+        let googleBody, model;
+        try {
+            const result = await this.formatConverter.translateClaudeToGoogle(req.body);
+            googleBody = result.googleRequest;
+            model = result.cleanModelName;
+        } catch (error) {
+            this.logger.error(`[Adapter] Claude request translation failed: ${error.message}`);
+            return this._sendClaudeErrorResponse(res, 400, "invalid_request_error", "Invalid Claude request format.");
+        }
+
+        // Build countTokens request
+        // Per Gemini API docs, countTokens accepts:
+        // - contents[] (simple mode)
+        // - generateContentRequest (full request with model, contents, tools, systemInstruction, etc.)
+        const countTokensBody = {
+            generateContentRequest: {
+                model: `models/${model}`,
+                ...googleBody,
+            },
+        };
+
+        const proxyRequest = {
+            body: JSON.stringify(countTokensBody),
+            headers: { "Content-Type": "application/json" },
+            is_generative: false,
+            method: "POST",
+            path: `/v1beta/models/${model}:countTokens`,
+            query_params: {},
+            request_id: requestId,
+        };
+
+        const messageQueue = this.connectionRegistry.createMessageQueue(requestId);
+
+        try {
+            this._forwardRequest(proxyRequest);
+            const response = await messageQueue.dequeue();
+
+            if (response.event_type === "error") {
+                this.logger.error(
+                    `[Request] Received error from browser, will trigger switching logic. Status code: ${response.status}, message: ${response.message}`
+                );
+                this._sendClaudeErrorResponse(res, response.status || 500, "api_error", response.message);
+                if (!this._isConnectionResetError(response)) {
+                    await this.authSwitcher.handleRequestFailureAndSwitch(response, null);
+                }
+                return;
+            }
+
+            // For non-streaming requests, consume all chunks until STREAM_END
+            let fullBody = "";
+            if (response.type !== "STREAM_END") {
+                if (response.data) fullBody += response.data;
+                // eslint-disable-next-line no-constant-condition
+                while (true) {
+                    const message = await messageQueue.dequeue();
+                    if (message.type === "STREAM_END") {
+                        break;
+                    }
+                    if (message.event_type === "error") {
+                        this.logger.error(`[Request] Error received during count tokens: ${message.message}`);
+                        return this._sendClaudeErrorResponse(res, 500, "api_error", message.message);
+                    }
+                    if (message.data) fullBody += message.data;
+                }
+            }
+
+            // Parse Gemini response
+            const geminiResponse = JSON.parse(fullBody || response.body);
+            const totalTokens = geminiResponse.totalTokens || 0;
+
+            // Reset failure count on success
+            if (this.authSwitcher.failureCount > 0) {
+                this.logger.info(
+                    `✅ [Auth] Count tokens request successful - failure count reset from ${this.authSwitcher.failureCount} to 0`
+                );
+                this.authSwitcher.failureCount = 0;
+            }
+
+            // Return Claude-compatible response
+            res.status(200).json({
+                input_tokens: totalTokens,
+            });
+
+            this.logger.info(`[Request] Claude count tokens completed: ${totalTokens} input tokens`);
+        } catch (error) {
+            this._handleClaudeRequestError(error, res);
+        } finally {
+            this.connectionRegistry.removeMessageQueue(requestId);
+            if (!res.writableEnded) res.end();
+        }
     }
 
     // === Response Handlers ===
+
+    async _streamClaudeResponse(messageQueue, res, model) {
+        const streamState = {};
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            const message = await messageQueue.dequeue(30000);
+
+            if (message.type === "STREAM_END") {
+                this.logger.info("[Request] Claude stream end signal received.");
+                break;
+            }
+
+            if (message.event_type === "error") {
+                this.logger.error(`[Request] Error received during Claude stream: ${message.message}`);
+                // Attempt to send error event to client if headers allowed, then close
+                if (!res.writableEnded) {
+                    res.write(
+                        `event: error\ndata: ${JSON.stringify({
+                            error: {
+                                message: message.message,
+                                type: "api_error",
+                            },
+                            type: "error",
+                        })}\n\n`
+                    );
+                }
+                break;
+            }
+
+            if (message.data) {
+                const claudeChunk = this.formatConverter.translateGoogleToClaudeStream(
+                    message.data,
+                    model,
+                    streamState
+                );
+                if (claudeChunk) {
+                    res.write(claudeChunk);
+                }
+            }
+        }
+    }
+
+    async _sendClaudeNonStreamResponse(messageQueue, res, model) {
+        let fullBody = "";
+        let receiving = true;
+        while (receiving) {
+            const message = await messageQueue.dequeue();
+            if (message.type === "STREAM_END") {
+                this.logger.info("[Request] Claude received end signal.");
+                receiving = false;
+                break;
+            }
+
+            if (message.event_type === "error") {
+                this.logger.error(`[Adapter] Error during Claude non-stream conversion: ${message.message}`);
+                this._sendClaudeErrorResponse(res, 500, "api_error", message.message);
+                return;
+            }
+
+            if (message.event_type === "chunk" && message.data) {
+                fullBody += message.data;
+            }
+        }
+
+        try {
+            const googleResponse = JSON.parse(fullBody);
+            const claudeResponse = this.formatConverter.convertGoogleToClaudeNonStream(googleResponse, model);
+            res.type("application/json").send(JSON.stringify(claudeResponse));
+        } catch (e) {
+            this.logger.error(`[Adapter] Failed to parse response for Claude: ${e.message}`);
+            this._sendClaudeErrorResponse(res, 500, "api_error", "Failed to parse backend response");
+        }
+    }
+
+    _sendClaudeErrorResponse(res, status, errorType, message) {
+        if (!res.headersSent) {
+            res.status(status)
+                .type("application/json")
+                .send(
+                    JSON.stringify({
+                        error: {
+                            message,
+                            type: errorType,
+                        },
+                        type: "error",
+                    })
+                );
+        }
+    }
+
+    _handleClaudeRequestError(error, res) {
+        if (res.headersSent) {
+            this.logger.error(`[Request] Claude request error (headers already sent): ${error.message}`);
+            if (!res.writableEnded) res.end();
+        } else {
+            this.logger.error(`[Request] Claude request error: ${error.message}`);
+            let status = 500;
+            let errorType = "api_error";
+            if (error.message.toLowerCase().includes("timeout")) {
+                status = 504;
+                errorType = "timeout_error";
+            } else if (this._isConnectionResetError(error)) {
+                status = 503;
+                errorType = "overloaded_error";
+            }
+            this._sendClaudeErrorResponse(res, status, errorType, `Proxy error: ${error.message}`);
+        }
+    }
 
     async _handlePseudoStreamResponse(proxyRequest, messageQueue, req, res) {
         this.logger.info("[Request] Entering pseudo-stream mode...");
@@ -663,8 +1215,14 @@ class RequestHandler {
                     // Send standard HTTP error response
                     this._sendErrorResponse(res, result.error.status || 500, result.error.message);
 
-                    // Handle account switch without sending callback to client
-                    await this.authSwitcher.handleRequestFailureAndSwitch(result.error, null);
+                    // Avoid switching account if the error is just a connection reset
+                    if (!this._isConnectionResetError(result.error)) {
+                        await this.authSwitcher.handleRequestFailureAndSwitch(result.error, null);
+                    } else {
+                        this.logger.info(
+                            "[Request] Failure due to connection reset (Gemini Non-Stream), skipping account switch."
+                        );
+                    }
                 }
                 return;
             }
@@ -686,13 +1244,19 @@ class RequestHandler {
 
             // Read all data chunks until STREAM_END to handle potential fragmentation
             let fullData = "";
-            let streaming = true;
-            while (streaming) {
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
                 const message = await messageQueue.dequeue(); // 5 min timeout
                 if (message.type === "STREAM_END") {
-                    streaming = false;
                     break;
                 }
+
+                if (message.event_type === "error") {
+                    this.logger.error(`[Request] Error received during Gemini pseudo-stream: ${message.message}`);
+                    this._sendErrorChunkToClient(res, message.message);
+                    break;
+                }
+
                 if (message.data) {
                     fullData += message.data;
                 }
@@ -808,7 +1372,14 @@ class RequestHandler {
                 );
             } else {
                 this.logger.error(`[Request] Request failed, will be counted in failure statistics.`);
-                await this.authSwitcher.handleRequestFailureAndSwitch(headerMessage, null);
+                // Avoid switching account if the error is just a connection reset
+                if (!this._isConnectionResetError(headerMessage)) {
+                    await this.authSwitcher.handleRequestFailureAndSwitch(headerMessage, null);
+                } else {
+                    this.logger.info(
+                        "[Request] Failure due to connection reset (Gemini Real Stream), skipping account switch."
+                    );
+                }
                 return this._sendErrorResponse(res, headerMessage.status, headerMessage.message);
             }
             if (!res.writableEnded) res.end();
@@ -830,14 +1401,24 @@ class RequestHandler {
         this.logger.info("[Request] Starting streaming transmission...");
         try {
             let lastChunk = "";
-            let streaming = true;
-            while (streaming) {
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
                 const dataMessage = await messageQueue.dequeue(30000);
                 if (dataMessage.type === "STREAM_END") {
                     this.logger.info("[Request] Received stream end signal.");
-                    streaming = false;
                     break;
                 }
+
+                if (dataMessage.event_type === "error") {
+                    this.logger.error(`[Request] Error received during Gemini real stream: ${dataMessage.message}`);
+                    if (!res.writableEnded) {
+                        res.write(
+                            `data: ${JSON.stringify({ error: { code: 500, message: dataMessage.message, status: "INTERNAL_ERROR" } })}\n\n`
+                        );
+                    }
+                    break;
+                }
+
                 if (dataMessage.data) {
                     res.write(dataMessage.data);
                     lastChunk = dataMessage.data;
@@ -880,7 +1461,14 @@ class RequestHandler {
                     this.logger.info(`[Request] Request #${proxyRequest.request_id} was properly cancelled by user.`);
                 } else {
                     this.logger.error(`[Request] Browser returned error after retries: ${result.error.message}`);
-                    await this.authSwitcher.handleRequestFailureAndSwitch(result.error, null);
+                    // Avoid switching account if the error is just a connection reset
+                    if (!this._isConnectionResetError(result.error)) {
+                        await this.authSwitcher.handleRequestFailureAndSwitch(result.error, null);
+                    } else {
+                        this.logger.info(
+                            "[Request] Failure due to connection reset (Gemini Non-Stream), skipping account switch."
+                        );
+                    }
                 }
                 return this._sendErrorResponse(res, result.error.status || 500, result.error.message);
             }
@@ -903,6 +1491,13 @@ class RequestHandler {
                     receiving = false;
                     break;
                 }
+
+                if (message.event_type === "error") {
+                    this.logger.error(`[Request] Error received during Gemini non-stream: ${message.message}`);
+                    this._sendErrorResponse(res, 500, message.message);
+                    return;
+                }
+
                 if (message.event_type === "chunk" && message.data) {
                     chunks.push(Buffer.from(message.data));
                 }
@@ -1006,6 +1601,15 @@ class RequestHandler {
                     errorPayload = { message: error.message, status: 500 };
                 }
 
+                // Stop retrying immediately if the queue is closed (connection reset)
+                if (this._isConnectionResetError(errorPayload)) {
+                    this.logger.warn(
+                        `[Request] Message queue closed unexpectedly (likely due to connection reset), aborting retries.`
+                    );
+                    lastError = { message: "Connection lost (Queue closed)", status: 503 };
+                    break;
+                }
+
                 lastError = errorPayload;
 
                 // Check if we should stop retrying immediately based on status code
@@ -1043,16 +1647,27 @@ class RequestHandler {
 
     async _streamOpenAIResponse(messageQueue, res, model) {
         const streamState = {};
-        let streaming = true;
 
-        while (streaming) {
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
             const message = await messageQueue.dequeue(30000);
             if (message.type === "STREAM_END") {
-                this.logger.info("[Request] Stream end signal received.");
+                this.logger.info("[Request] OpenAI stream end signal received.");
                 res.write("data: [DONE]\n\n");
-                streaming = false;
                 break;
             }
+
+            if (message.event_type === "error") {
+                this.logger.error(`[Request] Error received during OpenAI stream: ${message.message}`);
+                // Attempt to send error event to client if headers allowed, then close
+                if (!res.writableEnded) {
+                    res.write(
+                        `data: ${JSON.stringify({ error: { code: 500, message: message.message, type: "api_error" } })}\n\n`
+                    );
+                }
+                break;
+            }
+
             if (message.data) {
                 const openAIChunk = this.formatConverter.translateGoogleToOpenAIStream(
                     message.data,
@@ -1072,10 +1687,17 @@ class RequestHandler {
         while (receiving) {
             const message = await messageQueue.dequeue();
             if (message.type === "STREAM_END") {
-                this.logger.info("[Request] Received end signal.");
+                this.logger.info("[Request] OpenAI received end signal.");
                 receiving = false;
                 break;
             }
+
+            if (message.event_type === "error") {
+                this.logger.error(`[Adapter] Error during OpenAI non-stream conversion: ${message.message}`);
+                this._sendErrorResponse(res, 500, message.message);
+                return;
+            }
+
             if (message.event_type === "chunk" && message.data) {
                 fullBody += message.data;
             }
@@ -1087,7 +1709,7 @@ class RequestHandler {
             const openAIResponse = this.formatConverter.convertGoogleToOpenAINonStream(googleResponse, model);
             res.type("application/json").send(JSON.stringify(openAIResponse));
         } catch (e) {
-            this.logger.error(`[Request] Failed to parse response: ${e.message}`);
+            this.logger.error(`[Adapter] Failed to parse response for OpenAI: ${e.message}`);
             this._sendErrorResponse(res, 500, "Failed to parse backend response");
         }
     }
@@ -1147,7 +1769,13 @@ class RequestHandler {
             if (!res.writableEnded) res.end();
         } else {
             this.logger.error(`[Request] Request processing error: ${error.message}`);
-            const status = error.message.toLowerCase().includes("timeout") ? 504 : 500;
+            let status = 500;
+            if (error.message.toLowerCase().includes("timeout")) {
+                status = 504;
+            } else if (this._isConnectionResetError(error)) {
+                status = 503;
+                this.logger.info("[Request] Mapping connection reset error to 503 Service Unavailable.");
+            }
             this._sendErrorResponse(res, status, `Proxy error: ${error.message}`);
         }
     }

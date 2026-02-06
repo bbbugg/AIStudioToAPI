@@ -2,14 +2,14 @@
 
 [中文文档](README.md) | English
 
-A tool that wraps Google AI Studio web interface to provide OpenAI API and Gemini API compatible endpoints. The service acts as a proxy, converting API requests to browser interactions with the AI Studio web interface.
+A tool that wraps Google AI Studio web interface to provide OpenAI API, Gemini API, and Anthropic API compatible endpoints. The service acts as a proxy, converting API requests to browser interactions with the AI Studio web interface.
 
 ## ✨ Features
 
-- 🔄 **API Compatibility**: Compatible with both OpenAI API and Gemini API formats
+- 🔄 **API Compatibility**: Compatible with OpenAI API, Gemini API, and Anthropic API formats
 - 🌐 **Web Automation**: Uses browser automation to interact with AI Studio web interface
 - 🔐 **Authentication**: Secure API key-based authentication
-- 🔧 **Tool Calls Support**: Both OpenAI and Gemini APIs support Tool Calls (Function Calling)
+- 🔧 **Tool Calls Support**: OpenAI, Gemini, and Anthropic APIs all support Tool Calls (Function Calling)
 - 📝 **Model Support**: Access to various Gemini models through AI Studio, including image generation and TTS (text-to-speech) models
 - 🎨 **Homepage Display Control**: Provides a visual web console with account management, VNC login, and more
 
@@ -34,6 +34,8 @@ A tool that wraps Google AI Studio web interface to provide OpenAI API and Gemin
    - Automatically download the Camoufox browser (a privacy-focused Firefox fork)
    - Launch the browser and navigate to AI Studio automatically
    - Save your authentication credentials locally
+
+   > 💡 **Tip:** If downloading the Camoufox browser fails or takes too long, you can [manually download it from here](https://github.com/daijro/camoufox/releases/tag/v135.0.1-beta.24), and set the environment variable `CAMOUFOX_EXECUTABLE_PATH` to the path of the browser executable (both absolute and relative paths are supported).
 
 3. Configure Environment Variables (Optional):
 
@@ -202,6 +204,14 @@ This endpoint is forwarded to the official Gemini API format endpoint.
 - `POST /v1beta/models/{model_name}:batchEmbedContents`: Batch generate text embedding vectors.
 - `POST /v1beta/models/{model_name}:predict`: Imagen series models image generation.
 
+### 👤 Anthropic Compatible API
+
+This endpoint forwards requests to the official Gemini API format endpoint.
+
+- `GET /v1/models`: List models.
+- `POST /v1/messages`: Chat message completions, supports non-streaming, real streaming, and fake streaming.
+- `POST /v1/messages/count_tokens`: Count tokens in the messages.
+
 > 📖 For detailed API usage examples, see: [API Usage Examples](docs/en/api-examples.md)
 
 ## 🧰 Configuration
@@ -236,12 +246,13 @@ This endpoint is forwarded to the official Gemini API format endpoint.
 
 #### 🗒️ Other Configuration
 
-| Variable            | Description                                                           | Default |
-| :------------------ | :-------------------------------------------------------------------- | :------ |
-| `STREAMING_MODE`    | Streaming mode. `real` for real streaming, `fake` for fake streaming. | `real`  |
-| `FORCE_THINKING`    | Force enable thinking mode for all requests.                          | `false` |
-| `FORCE_WEB_SEARCH`  | Force enable web search for all requests.                             | `false` |
-| `FORCE_URL_CONTEXT` | Force enable URL context for all requests.                            | `false` |
+| Variable                   | Description                                                                                                                | Default       |
+| :------------------------- | :------------------------------------------------------------------------------------------------------------------------- | :------------ |
+| `STREAMING_MODE`           | Streaming mode. `real` for real streaming, `fake` for fake streaming.                                                      | `real`        |
+| `FORCE_THINKING`           | Force enable thinking mode for all requests.                                                                               | `false`       |
+| `FORCE_WEB_SEARCH`         | Force enable web search for all requests.                                                                                  | `false`       |
+| `FORCE_URL_CONTEXT`        | Force enable URL context for all requests.                                                                                 | `false`       |
+| `CAMOUFOX_EXECUTABLE_PATH` | Path to the Camoufox browser executable (supports both absolute and relative paths). Only required if manually downloaded. | Auto-detected |
 
 ### 🧠 Model List Configuration
 

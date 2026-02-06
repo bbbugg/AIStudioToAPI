@@ -40,7 +40,38 @@ class ProxyServerSystem extends EventEmitter {
 
         this.authSource = new AuthSource(this.logger);
         this.browserManager = new BrowserManager(this.logger, this.config, this.authSource);
-        this.connectionRegistry = new ConnectionRegistry(this.logger);
+
+        // Create ConnectionRegistry with lightweight reconnect callback
+        // When WebSocket connection is lost but browser is still running,
+        // this callback attempts to refresh the page and re-inject the script
+        this.connectionRegistry = new ConnectionRegistry(this.logger, async () => {
+            // Skip if browser is being intentionally closed (not an unexpected disconnect)
+            if (this.browserManager.isClosingIntentionally) {
+                this.logger.info("[System] Browser is closing intentionally, skipping reconnect attempt.");
+                return;
+            }
+            // Skip if the system is busy switching/recovering to avoid conflicting refreshes
+            if (this.requestHandler?.isSystemBusy) {
+                this.logger.info(
+                    "[System] System is busy (switching/recovering), skipping lightweight reconnect attempt."
+                );
+                return;
+            }
+
+            if (this.browserManager.browser && this.browserManager.page && !this.browserManager.page.isClosed()) {
+                this.logger.error(
+                    "[System] WebSocket lost but browser still running, attempting lightweight reconnect..."
+                );
+                const success = await this.browserManager.attemptLightweightReconnect();
+                if (!success) {
+                    this.logger.warn(
+                        "[System] Lightweight reconnect failed. Will attempt full recovery on next request."
+                    );
+                }
+            } else {
+                this.logger.info("[System] Browser not available, skipping lightweight reconnect.");
+            }
+        });
         this.requestHandler = new RequestHandler(
             this,
             this.connectionRegistry,
@@ -150,7 +181,7 @@ class ProxyServerSystem extends EventEmitter {
 
             if (clientKey && serverApiKeys.includes(clientKey)) {
                 this.logger.info(
-                    `[Auth] API Key verification passed (from: ${req.headers["x-forwarded-for"] || req.ip})`
+                    `[Auth] API Key verification passed (from: ${this.webRoutes.authRoutes.getClientIP(req)})`
                 );
                 if (req.query.key) {
                     delete req.query.key;
@@ -159,7 +190,7 @@ class ProxyServerSystem extends EventEmitter {
             }
 
             if (req.path !== "/favicon.ico") {
-                const clientIp = req.headers["x-forwarded-for"] || req.ip;
+                const clientIp = this.webRoutes.authRoutes.getClientIP(req);
                 this.logger.warn(
                     `[Auth] Access password incorrect or missing, request denied. IP: ${clientIp}, Path: ${req.path}`
                 );
@@ -312,6 +343,7 @@ class ProxyServerSystem extends EventEmitter {
                     " origin, accept, baggage, sentry-trace, openai-organization, openai-project, openai-beta, x-stainless-lang, " +
                     "x-stainless-package-version, x-stainless-os, x-stainless-arch, x-stainless-runtime, x-stainless-runtime-version, " +
                     "x-stainless-retry-count, x-stainless-timeout, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, " +
+                    "anthropic-version, anthropic-beta, anthropic-dangerous-direct-browser-access, " +
                     "x-goog-upload-protocol, x-goog-upload-command, x-goog-upload-header-content-length, " +
                     "x-goog-upload-header-content-type, x-goog-upload-url, x-goog-upload-offset, x-goog-upload-status"
             );
@@ -413,6 +445,16 @@ class ProxyServerSystem extends EventEmitter {
 
         app.post("/v1/chat/completions", (req, res) => {
             this.requestHandler.processOpenAIRequest(req, res);
+        });
+
+        // Claude API compatible endpoint
+        app.post("/v1/messages", (req, res) => {
+            this.requestHandler.processClaudeRequest(req, res);
+        });
+
+        // Claude API count tokens endpoint
+        app.post("/v1/messages/count_tokens", (req, res) => {
+            this.requestHandler.processClaudeCountTokens(req, res);
         });
 
         // VNC WebSocket downgrade / missing headers handler

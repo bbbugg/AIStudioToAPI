@@ -134,7 +134,16 @@ class FormatConverter {
 
             for (const key of Object.keys(obj)) {
                 // Skip fields not supported by Gemini API
-                if (key === "$schema" || key === "additionalProperties") {
+                const unsupportedKeys = [
+                    "$schema",
+                    "additionalProperties",
+                    "ref",
+                    "$ref",
+                    "propertyNames",
+                    "patternProperties",
+                    "unevaluatedProperties",
+                ];
+                if (unsupportedKeys.includes(key)) {
                     continue;
                 }
 
@@ -170,12 +179,150 @@ class FormatConverter {
     }
 
     /**
+     * Convert JSON Schema to Gemini parameters format.
+     * Handles nullable types, enums, and ensures uppercase types.
+     *
+     * @param {Object} obj - The schema object to convert
+     * @param {boolean} [isResponseSchema=false] - If true, applies stricter rules (e.g. anyOf for unions) for Structured Outputs
+     * @param {boolean} [isProperties=false] - If true, the current object is a map of property definitions, so keys should not be filtered
+     * @returns {Object} The converted schema
+     */
+    _convertSchemaToGemini(obj, isResponseSchema = false, isProperties = false) {
+        if (!obj || typeof obj !== "object") return obj;
+
+        const result = Array.isArray(obj) ? [] : {};
+
+        for (const key of Object.keys(obj)) {
+            // 1. Filter out unsupported fields using a blacklist approach
+            const unsupportedKeys = [
+                "$schema",
+                "additionalProperties",
+                "ref",
+                "$ref",
+                "propertyNames",
+                "patternProperties",
+                "unevaluatedProperties",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+                "const",
+            ];
+
+            if (isResponseSchema) {
+                // For Structured Outputs: stricter filtering of metadata that causes 400 errors
+                unsupportedKeys.push("default", "examples", "$defs", "id");
+            }
+
+            // ONLY Filter metadata keywords if NOT a property name (isProperties is false)
+            if (!isProperties && unsupportedKeys.includes(key)) {
+                continue;
+            }
+
+            // Handle anyOf specially (only when it is a schema keyword),
+            // but `{"type":"OBJECT","properties":{"isNewTopic":{"type":"BOOLEAN"},"title":{"anyOf":[{"type":"STRING"},{"type":"NULL"}]}},"required":["isNewTopic","title"]}` is right, need to confirm
+            if (key === "anyOf" && !isProperties) {
+                if (Array.isArray(obj[key])) {
+                    const variants = obj[key];
+                    const hasNull = variants.some(v => v.type === "null");
+                    const nonNullVariants = variants.filter(v => v.type !== "null");
+
+                    if (hasNull) {
+                        result.nullable = true;
+                    }
+
+                    if (nonNullVariants.length === 1) {
+                        // Collapse single variant. Reset isProperties to false for the variant's schema.
+                        const converted = this._convertSchemaToGemini(nonNullVariants[0], isResponseSchema, false);
+                        // Merge converted properties into result
+                        Object.assign(result, converted);
+                        if (hasNull) result.nullable = true;
+                        continue; // Skip setting 'anyOf' explicitly
+                    } else if (nonNullVariants.length > 0) {
+                        // Keep anyOf for multiple variants. Reset isProperties for sub-schemas.
+                        result.anyOf = nonNullVariants.map(v =>
+                            this._convertSchemaToGemini(v, isResponseSchema, false)
+                        );
+                        continue;
+                    } else if (hasNull) {
+                        // Only null type? Keep it as nullable without forcing a specific type.
+                        continue;
+                    }
+                }
+            }
+
+            // Handle type specially (only when it is a schema keyword)
+            if (key === "type" && !isProperties) {
+                if (Array.isArray(obj[key])) {
+                    // Handle nullable types like ["string", "null"]
+                    const types = obj[key];
+                    const nonNullTypes = types.filter(t => t !== "null");
+                    const hasNull = types.includes("null");
+
+                    if (hasNull) {
+                        result.nullable = true;
+                    }
+
+                    if (nonNullTypes.length === 1) {
+                        // Single non-null type: use it directly
+                        result[key] = nonNullTypes[0].toUpperCase();
+                    } else if (nonNullTypes.length > 1) {
+                        // Multiple non-null types: e.g. ["string", "integer"]
+                        if (isResponseSchema) {
+                            // For Response Schema: Gemini doesn't support array types, use anyOf
+                            result.anyOf = nonNullTypes.map(t => ({
+                                type: t.toUpperCase(),
+                            }));
+                        } else {
+                            result[key] = nonNullTypes.map(t => t.toUpperCase());
+                        }
+                    } else {
+                        // Only null type, default to STRING
+                        result[key] = "STRING";
+                    }
+                } else if (typeof obj[key] === "string") {
+                    // Convert lowercase type to uppercase for Gemini
+                    result[key] = obj[key].toUpperCase();
+                } else if (typeof obj[key] === "object" && obj[key] !== null) {
+                    // Type being an object is a sub-schema definition, not property name mapping
+                    result[key] = this._convertSchemaToGemini(obj[key], isResponseSchema, false);
+                } else {
+                    result[key] = obj[key];
+                }
+            } else if (key === "enum" && !isProperties) {
+                // 2. Ensure all enum values are strings (Only for Response Schema)
+                if (isResponseSchema) {
+                    if (Array.isArray(obj[key])) {
+                        result[key] = obj[key].map(String);
+                    } else if (obj[key] !== undefined && obj[key] !== null) {
+                        result[key] = [String(obj[key])];
+                    }
+                    result["type"] = "STRING";
+                } else {
+                    // For Tools: Allow original enum values
+                    result[key] = obj[key];
+                }
+            } else if (typeof obj[key] === "object" && obj[key] !== null) {
+                // Recursion logic:
+                // - If key is 'properties', next level is a map of property NAMES. Set isProperties = true.
+                // - Otherwise, if we were currently in a properties map (isProperties is true),
+                //   the value is a schema definition. For its keys, isProperties MUST be false.
+                const nextIsProperties = key === "properties";
+                const recursionFlag = isProperties ? false : nextIsProperties;
+
+                result[key] = this._convertSchemaToGemini(obj[key], isResponseSchema, recursionFlag);
+            } else {
+                result[key] = obj[key];
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * Convert OpenAI request format to Google Gemini format
      * @param {object} openaiBody - OpenAI format request body
      * @returns {Promise<{ googleRequest: object, cleanModelName: string }>} - Converted request and cleaned model name
      */
     async translateOpenAIToGoogle(openaiBody) {
-        // eslint-disable-line no-unused-vars
         this.logger.info("[Adapter] Starting translation of OpenAI request format to Google format...");
 
         // Parse thinkingLevel suffix from model name (e.g., gemini-3-flash-preview-minimal or gemini-3-flash-preview(low))
@@ -189,11 +336,7 @@ class FormatConverter {
         }
 
         // [DEBUG] Log incoming messages for troubleshooting
-        this.logger.debug(`[Adapter] Debug: incoming messages = ${JSON.stringify(openaiBody.messages, null, 2)}`);
-        // [DEBUG] Log original OpenAI tools
-        if (openaiBody.tools && openaiBody.tools.length > 0) {
-            this.logger.debug(`[Adapter] Debug: original OpenAI tools = ${JSON.stringify(openaiBody.tools, null, 2)}`);
-        }
+        this.logger.debug(`[Adapter] Debug: incoming OpenAI Body = ${JSON.stringify(openaiBody, null, 2)}`);
 
         let systemInstruction = null;
         const googleContents = [];
@@ -416,9 +559,6 @@ class FormatConverter {
         flushToolParts();
 
         // Build Google request
-        this.logger.debug(`[Adapter] Debug: googleContents length = ${googleContents.length}`);
-        // [DEBUG] Log full googleContents for troubleshooting thoughtSignature issue
-        this.logger.debug(`[Adapter] Debug: googleContents = ${JSON.stringify(googleContents, null, 2)}`);
         const googleRequest = {
             contents: googleContents,
             ...(systemInstruction && {
@@ -497,101 +637,6 @@ class FormatConverter {
 
         googleRequest.generationConfig = generationConfig;
 
-        /**
-         * Helper function to convert OpenAI parameter types to Gemini format (uppercase).
-         * Also handles nullable types like ["string", "null"] -> type: "STRING", nullable: true.
-         * This function is used for both tools and response_format schema conversion.
-         *
-         * @param {Object} obj - The schema object to convert
-         * @param {boolean} [isResponseSchema=false] - If true, applies stricter rules (e.g. anyOf for unions) for Structured Outputs
-         * @returns {Object} The converted schema
-         */
-        const convertParameterTypes = (obj, isResponseSchema = false) => {
-            if (!obj || typeof obj !== "object") return obj;
-
-            const result = Array.isArray(obj) ? [] : {};
-
-            for (const key of Object.keys(obj)) {
-                // 1. Filter out unsupported fields using a blacklist approach
-                // This allows potentially valid fields to pass through while blocking known problematic ones
-                const unsupportedKeys = [
-                    "$schema",
-                    "additionalProperties",
-                    "ref",
-                    "$ref",
-                    "propertyNames",
-                    "patternProperties",
-                    "unevaluatedProperties",
-                ];
-
-                if (isResponseSchema) {
-                    // For Structured Outputs: stricter filtering of metadata that causes 400 errors
-                    unsupportedKeys.push("title", "default", "examples", "$defs", "id");
-                }
-
-                if (unsupportedKeys.includes(key)) {
-                    continue;
-                }
-
-                if (key === "type") {
-                    if (Array.isArray(obj[key])) {
-                        // Handle nullable types like ["string", "null"]
-                        const types = obj[key];
-                        const nonNullTypes = types.filter(t => t !== "null");
-                        const hasNull = types.includes("null");
-
-                        if (hasNull) {
-                            result.nullable = true;
-                        }
-
-                        if (nonNullTypes.length === 1) {
-                            // Single non-null type: use it directly
-                            result[key] = nonNullTypes[0].toUpperCase();
-                        } else if (nonNullTypes.length > 1) {
-                            // Multiple non-null types: e.g. ["string", "integer"]
-                            if (isResponseSchema) {
-                                // For Response Schema: Gemini doesn't support array types, use anyOf
-                                result.anyOf = nonNullTypes.map(t => ({
-                                    type: t.toUpperCase(),
-                                }));
-                            } else {
-                                result[key] = nonNullTypes.map(t => t.toUpperCase());
-                            }
-                        } else {
-                            // Only null type, default to STRING
-                            result[key] = "STRING";
-                        }
-                    } else if (typeof obj[key] === "string") {
-                        // Convert lowercase type to uppercase for Gemini
-                        result[key] = obj[key].toUpperCase();
-                    } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                        result[key] = convertParameterTypes(obj[key], isResponseSchema);
-                    } else {
-                        result[key] = obj[key];
-                    }
-                } else if (key === "enum") {
-                    // 2. Ensure all enum values are strings (Only for Response Schema)
-                    if (isResponseSchema) {
-                        if (Array.isArray(obj[key])) {
-                            result[key] = obj[key].map(String);
-                        } else if (obj[key] !== undefined && obj[key] !== null) {
-                            result[key] = [String(obj[key])];
-                        }
-                        result["type"] = "STRING";
-                    } else {
-                        // For Tools: Allow original enum values
-                        result[key] = obj[key];
-                    }
-                } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                    result[key] = convertParameterTypes(obj[key], isResponseSchema);
-                } else {
-                    result[key] = obj[key];
-                }
-            }
-
-            return result;
-        };
-
         // Convert OpenAI tools to Gemini functionDeclarations
         const openaiTools = openaiBody.tools || openaiBody.functions;
         if (openaiTools && Array.isArray(openaiTools) && openaiTools.length > 0) {
@@ -612,11 +657,9 @@ class FormatConverter {
                     }
 
                     if (funcDef.parameters) {
-                        // Convert parameter types from lowercase to uppercase
-                        // isResponseSchema = false for Tools
-                        declaration.parameters = convertParameterTypes(funcDef.parameters, false);
+                        // Use shared _convertSchemaToGemini
+                        declaration.parameters = this._convertSchemaToGemini(funcDef.parameters);
                     }
-
                     functionDeclarations.push(declaration);
                 }
             }
@@ -674,9 +717,9 @@ class FormatConverter {
                     try {
                         this.logger.debug(`[Adapter] Debug: Converting OpenAI JSON Schema: ${JSON.stringify(schema)}`);
 
-                        // Convert schema to Gemini format (reuse convertParameterTypes helper defined above)
+                        // Convert schema to Gemini format (reuse shared method)
                         // isResponseSchema = true for Structured Output
-                        const convertedSchema = convertParameterTypes(schema, true);
+                        const convertedSchema = this._convertSchemaToGemini(schema, true);
 
                         this.logger.debug(
                             `[Adapter] Debug: Converted Gemini JSON Schema: ${JSON.stringify(convertedSchema)}`
@@ -715,6 +758,20 @@ class FormatConverter {
             }
         }
 
+        this._finalizeGoogleRequest(googleRequest);
+        this.logger.info("[Adapter] OpenAI to Google translation complete.");
+        return { cleanModelName, googleRequest };
+    }
+
+    /**
+     * Common final processing for Gemini requests:
+     * 1. Inject force features (Search, URL Context)
+     * 2. Apply safety settings
+     * 3. Log final request body
+     * @param {object} googleRequest - The Gemini request object to finalize
+     * @private
+     */
+    _finalizeGoogleRequest(googleRequest) {
         // Force web search and URL context
         if (this.serverSystem.forceWebSearch || this.serverSystem.forceUrlContext) {
             if (!googleRequest.tools) {
@@ -754,15 +811,7 @@ class FormatConverter {
             { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
         ];
 
-        // [DEBUG] Log full request body for troubleshooting 400 errors
-        if (googleRequest.tools && googleRequest.tools.length > 0) {
-            this.logger.debug(
-                `[Adapter] Debug: Sanitized Openai tools = ${JSON.stringify(googleRequest.tools, null, 2)}`
-            );
-        }
-
-        this.logger.info("[Adapter] Translation complete.");
-        return { cleanModelName, googleRequest };
+        this.logger.debug(`[Adapter] Debug: Final Gemini Request = ${JSON.stringify(googleRequest, null, 2)}`);
     }
 
     /**
@@ -1094,6 +1143,747 @@ class FormatConverter {
                 tool_tokens: toolPromptTokens,
             },
             total_tokens: totalTokens,
+        };
+    }
+
+    // ==================== Claude API Format Conversion ====================
+
+    /**
+     * Convert Claude API request format to Google Gemini format
+     * @param {object} claudeBody - Claude API format request body
+     * @returns {Promise<{ googleRequest: object, cleanModelName: string }>} - Converted request and cleaned model name
+     */
+    async translateClaudeToGoogle(claudeBody) {
+        this.logger.info("[Adapter] Starting translation of Claude request format to Google format...");
+
+        // Parse thinkingLevel suffix from model name
+        const rawModel = claudeBody.model || "gemini-2.5-flash-lite";
+        const { cleanModelName, thinkingLevel: modelThinkingLevel } = FormatConverter.parseModelThinkingLevel(rawModel);
+
+        if (modelThinkingLevel) {
+            this.logger.info(
+                `[Adapter] Detected thinkingLevel suffix in model name: "${rawModel}" -> model="${cleanModelName}", thinkingLevel="${modelThinkingLevel}"`
+            );
+        }
+
+        // [DEBUG] Log incoming messages
+        this.logger.debug(`[Adapter] Debug: incoming Claude Body = ${JSON.stringify(claudeBody, null, 2)}`);
+
+        let systemInstruction = null;
+        const googleContents = [];
+
+        // Pre-scan messages to build a map of tool_use_id -> function_name
+        // This is required because Gemini's functionResponse needs the original function name,
+        // but Claude's tool_result only provides the tool_use_id.
+        const toolIdToNameMap = new Map();
+        if (claudeBody.messages && Array.isArray(claudeBody.messages)) {
+            for (const message of claudeBody.messages) {
+                if (message.role === "assistant" && Array.isArray(message.content)) {
+                    for (const block of message.content) {
+                        if (block.type === "tool_use" && block.id && block.name) {
+                            toolIdToNameMap.set(block.id, block.name);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Extract system message (Claude uses a separate 'system' field)
+        if (claudeBody.system) {
+            const systemContent = Array.isArray(claudeBody.system)
+                ? claudeBody.system.map(block => (typeof block === "string" ? block : block.text || "")).join("\n")
+                : claudeBody.system;
+            systemInstruction = {
+                parts: [{ text: systemContent }],
+                role: "system",
+            };
+        }
+
+        // Buffer for accumulating consecutive tool result parts
+        let pendingToolParts = [];
+
+        const flushToolParts = () => {
+            if (pendingToolParts.length > 0) {
+                googleContents.push({
+                    parts: pendingToolParts,
+                    role: "user",
+                });
+                pendingToolParts = [];
+            }
+        };
+
+        // Convert Claude messages to Google format
+        for (const message of claudeBody.messages) {
+            const googleParts = [];
+
+            // Handle tool_result role (Claude's function response)
+            if (message.role === "user" && Array.isArray(message.content)) {
+                const toolResults = message.content.filter(block => block.type === "tool_result");
+                if (toolResults.length > 0) {
+                    for (const toolResult of toolResults) {
+                        let responseContent;
+                        if (typeof toolResult.content === "string") {
+                            try {
+                                responseContent = JSON.parse(toolResult.content);
+                            } catch (e) {
+                                /* eslint-disable-line no-unused-vars */
+                                responseContent = { result: toolResult.content };
+                            }
+                        } else if (Array.isArray(toolResult.content)) {
+                            // Handle array content (text blocks, etc.)
+                            const textParts = toolResult.content
+                                .filter(c => c.type === "text")
+                                .map(c => c.text)
+                                .join("\n");
+                            try {
+                                responseContent = JSON.parse(textParts);
+                            } catch {
+                                responseContent = { result: textParts };
+                            }
+                        } else {
+                            responseContent = toolResult.content || { result: "" };
+                        }
+
+                        // Resolve function name using the map
+                        const toolUseId = toolResult.tool_use_id;
+                        let functionName = toolIdToNameMap.get(toolUseId);
+
+                        if (!functionName) {
+                            this.logger.warn(
+                                `[Adapter] Warning: Tool name resolution failed for ID: ${toolUseId}. outputting as unknown_function`
+                            );
+                            functionName = "unknown_function";
+                        }
+
+                        pendingToolParts.push({
+                            functionResponse: {
+                                name: functionName,
+                                response: responseContent,
+                            },
+                        });
+                    }
+
+                    // Process non-tool_result content in the same message
+                    const otherContent = message.content.filter(block => block.type !== "tool_result");
+                    if (otherContent.length > 0) {
+                        flushToolParts();
+                        for (const block of otherContent) {
+                            if (block.type === "text") {
+                                googleParts.push({ text: block.text });
+                            } else if (block.type === "image") {
+                                googleParts.push({
+                                    inlineData: {
+                                        data: block.source.data,
+                                        mimeType: block.source.media_type,
+                                    },
+                                });
+                            }
+                        }
+                    }
+                    if (googleParts.length === 0) continue;
+                }
+            }
+
+            // Flush pending tool parts before non-tool messages
+            if (
+                message.role !== "user" ||
+                !Array.isArray(message.content) ||
+                !message.content.some(block => block.type === "tool_result")
+            ) {
+                flushToolParts();
+            }
+
+            // Handle assistant messages with tool_use
+            if (message.role === "assistant" && Array.isArray(message.content)) {
+                let signatureAttachedToCall = false;
+                for (const block of message.content) {
+                    if (block.type === "tool_use") {
+                        const functionCallPart = {
+                            functionCall: {
+                                args: block.input || {},
+                                name: block.name,
+                            },
+                        };
+                        if (!signatureAttachedToCall) {
+                            functionCallPart.thoughtSignature = FormatConverter.DUMMY_THOUGHT_SIGNATURE;
+                            signatureAttachedToCall = true;
+                        }
+                        googleParts.push(functionCallPart);
+                    } else if (block.type === "thinking") {
+                        // Claude thinking block -> Gemini thought
+                        googleParts.push({ text: block.thinking, thought: true });
+                    } else if (block.type === "text") {
+                        googleParts.push({ text: block.text });
+                    }
+                }
+            }
+
+            // Handle regular content
+            if (googleParts.length === 0) {
+                if (typeof message.content === "string" && message.content.length > 0) {
+                    googleParts.push({ text: message.content });
+                } else if (Array.isArray(message.content)) {
+                    for (const block of message.content) {
+                        if (block.type === "text") {
+                            googleParts.push({ text: block.text });
+                        } else if (block.type === "image") {
+                            const source = block.source;
+                            if (source.type === "base64") {
+                                googleParts.push({
+                                    inlineData: {
+                                        data: source.data,
+                                        mimeType: source.media_type,
+                                    },
+                                });
+                            } else if (source.type === "url") {
+                                try {
+                                    this.logger.info(`[Adapter] Downloading image from URL: ${source.url}`);
+                                    const response = await axios.get(source.url, { responseType: "arraybuffer" });
+                                    const imageBuffer = Buffer.from(response.data, "binary");
+                                    const base64Data = imageBuffer.toString("base64");
+                                    let mimeType = response.headers["content-type"];
+                                    if (!mimeType || mimeType === "application/octet-stream") {
+                                        mimeType = mime.lookup(source.url) || "image/jpeg";
+                                    }
+                                    googleParts.push({
+                                        inlineData: {
+                                            data: base64Data,
+                                            mimeType,
+                                        },
+                                    });
+                                    this.logger.info(
+                                        `[Adapter] Successfully downloaded and converted image to base64.`
+                                    );
+                                } catch (error) {
+                                    this.logger.error(`[Adapter] Failed to download image: ${error.message}`);
+                                    googleParts.push({
+                                        text: `[System Note: Failed to load image from ${source.url}]`,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (googleParts.length > 0) {
+                googleContents.push({
+                    parts: googleParts,
+                    role: message.role === "assistant" ? "model" : "user",
+                });
+            }
+        }
+
+        // Flush remaining tool parts
+        flushToolParts();
+
+        // Build Google request
+        const googleRequest = {
+            contents: googleContents,
+            ...(systemInstruction && {
+                systemInstruction: { parts: systemInstruction.parts, role: "user" },
+            }),
+        };
+
+        // Generation config
+        const generationConfig = {
+            maxOutputTokens: claudeBody.max_tokens,
+            stopSequences: claudeBody.stop_sequences,
+            temperature: claudeBody.temperature,
+            topK: claudeBody.top_k,
+            topP: claudeBody.top_p,
+        };
+
+        // Handle thinking config from Claude's metadata or top-level thinking
+        let thinkingConfig = null;
+
+        const thinkingParam = claudeBody.thinking || claudeBody.metadata?.thinking;
+
+        // Check if thinking is enabled:
+        // 1. metadata style: { enabled: true }
+        // 2. top-level style: { type: "enabled" }
+        const isThinkingEnabled = thinkingParam && (thinkingParam.enabled === true || thinkingParam.type === "enabled");
+
+        if (isThinkingEnabled) {
+            thinkingConfig = { includeThoughts: true };
+            if (thinkingParam.budget_tokens) {
+                // Gemini doesn't have budget_tokens, but we can log it
+                this.logger.info(`[Adapter] Claude thinking budget_tokens: ${thinkingParam.budget_tokens}`);
+            }
+        }
+
+        // Force thinking mode
+        if (this.serverSystem.forceThinking && !thinkingConfig) {
+            this.logger.info("[Adapter] Force thinking enabled, injecting thinkingConfig for Claude request.");
+            thinkingConfig = { includeThoughts: true };
+        }
+
+        // Apply model name suffix thinkingLevel
+        if (modelThinkingLevel) {
+            if (!thinkingConfig) thinkingConfig = {};
+            thinkingConfig.thinkingLevel = modelThinkingLevel;
+        }
+
+        if (thinkingConfig) {
+            generationConfig.thinkingConfig = thinkingConfig;
+            this.logger.info(
+                `[Adapter] Successfully extracted and converted thinking config: ${JSON.stringify(thinkingConfig)}`
+            );
+        }
+
+        // Handle Claude's structured output (output_format)
+        // Ref: https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs
+        if (claudeBody.output_format) {
+            if (claudeBody.output_format.type === "json_schema") {
+                // Support both direct 'schema' (user example) and 'json_schema' wrapper (OpenAI style)
+                let schema = claudeBody.output_format.schema;
+                let schemaName = "structured_output";
+
+                if (!schema && claudeBody.output_format.json_schema) {
+                    schema = claudeBody.output_format.json_schema.schema;
+                    schemaName = claudeBody.output_format.json_schema.name || schemaName;
+                }
+
+                if (schema) {
+                    this.logger.debug(`[Adapter] Debug: Converting Claude JSON Schema: ${JSON.stringify(schema)}`);
+                    generationConfig.responseMimeType = "application/json";
+                    generationConfig.responseSchema = this._convertSchemaToGemini(schema, true);
+                    this.logger.debug(
+                        `[Adapter] Debug: Converted Gemini JSON Schema: ${JSON.stringify(generationConfig.responseSchema)}`
+                    );
+                    this.logger.info(
+                        `[Adapter] Converted Claude output_format to Gemini responseSchema. Name: ${schemaName}`
+                    );
+                }
+            } else if (claudeBody.output_format.type === "json_object") {
+                generationConfig.responseMimeType = "application/json";
+                this.logger.info(`[Adapter] Converted Claude output_format (json_object) to Gemini responseMimeType.`);
+            } else if (claudeBody.output_format.type === "text") {
+                generationConfig.responseMimeType = "text/plain";
+            }
+        }
+
+        // Handle Claude's output_config (new format)
+        if (claudeBody.output_config && claudeBody.output_config.format) {
+            const format = claudeBody.output_config.format;
+            if (format.type === "json_schema" && format.schema) {
+                this.logger.debug(`[Adapter] Debug: Converting Claude JSON Schema: ${JSON.stringify(format.schema)}`);
+                generationConfig.responseMimeType = "application/json";
+                generationConfig.responseSchema = this._convertSchemaToGemini(format.schema, true);
+                this.logger.debug(
+                    `[Adapter] Debug: Converted Gemini JSON Schema: ${JSON.stringify(generationConfig.responseSchema)}`
+                );
+                this.logger.info(
+                    `[Adapter] Converted Claude output_config to Gemini responseSchema. Title: ${format.schema.title || "untitled"}`
+                );
+            }
+        }
+
+        googleRequest.generationConfig = generationConfig;
+
+        // Convert Claude tools to Gemini functionDeclarations
+        if (claudeBody.tools && Array.isArray(claudeBody.tools) && claudeBody.tools.length > 0) {
+            let hasWebSearchTool = false;
+            let hasUrlContextTool = false;
+            const functionDeclarations = [];
+
+            for (const tool of claudeBody.tools) {
+                // Handle specialized web search tool type (e.g. from Claude's search integration)
+                if (tool.type === "web_search_20250305" && tool.name === "web_search") {
+                    hasWebSearchTool = true;
+                    this.logger.info(
+                        `[Adapter] Detected web search tool in Claude request (name: ${tool.name}, type: ${tool.type}), mapping to Gemini googleSearch.`
+                    );
+                    continue; // Skip adding to functionDeclarations
+                }
+
+                // Handle specialized web fetch tool type, mapped to urlContext (Gemini 2.0 Feature)
+                if (tool.type === "web_fetch_20250910" && tool.name === "web_fetch") {
+                    hasUrlContextTool = true;
+                    this.logger.info(
+                        `[Adapter] Detected web fetch tool in Claude request (name: ${tool.name}, type: ${tool.type}), mapping to Gemini urlContext.`
+                    );
+                    continue; // Skip adding to functionDeclarations
+                }
+
+                if (tool.name) {
+                    const declaration = { name: tool.name };
+                    if (tool.description) declaration.description = tool.description;
+                    if (tool.input_schema) {
+                        declaration.parameters = this._convertSchemaToGemini(tool.input_schema);
+                    }
+                    functionDeclarations.push(declaration);
+                }
+            }
+
+            if (functionDeclarations.length > 0) {
+                googleRequest.tools = [{ functionDeclarations }];
+                this.logger.info(`[Adapter] Converted ${functionDeclarations.length} Claude tool(s) to Gemini format`);
+            }
+
+            // If web search tool was found, ensure googleSearch is added to tools
+            if (hasWebSearchTool) {
+                if (!googleRequest.tools) googleRequest.tools = [];
+                if (!googleRequest.tools.some(t => t.googleSearch)) {
+                    googleRequest.tools.push({ googleSearch: {} });
+                }
+            }
+
+            // If web fetch tool was found, ensure urlContext is added to tools
+            if (hasUrlContextTool) {
+                if (!googleRequest.tools) googleRequest.tools = [];
+                if (!googleRequest.tools.some(t => t.urlContext)) {
+                    googleRequest.tools.push({ urlContext: {} });
+                }
+            }
+        }
+
+        // Convert Claude tool_choice to Gemini toolConfig
+        if (claudeBody.tool_choice) {
+            const functionCallingConfig = {};
+            if (claudeBody.tool_choice.type === "auto") {
+                functionCallingConfig.mode = "AUTO";
+            } else if (claudeBody.tool_choice.type === "none") {
+                functionCallingConfig.mode = "NONE";
+            } else if (claudeBody.tool_choice.type === "any") {
+                functionCallingConfig.mode = "ANY";
+            } else if (claudeBody.tool_choice.type === "tool" && claudeBody.tool_choice.name) {
+                functionCallingConfig.mode = "ANY";
+                functionCallingConfig.allowedFunctionNames = [claudeBody.tool_choice.name];
+            }
+            if (Object.keys(functionCallingConfig).length > 0) {
+                googleRequest.toolConfig = { functionCallingConfig };
+            }
+        }
+
+        // Handle Claude's disable_parallel_tool_use
+        // Note: Gemini doesn't have a direct equivalent for this at the toolConfig level,
+        // but we can log it for debug purposes. Future improvements might involve
+        // filtering outputs if the model ignores the implied constraint.
+        if (claudeBody.tool_choice && claudeBody.tool_choice.disable_parallel_tool_use === true) {
+            this.logger.info(
+                "[Adapter] Claude request specifies disable_parallel_tool_use=true (Note: Applied as best-effort in Gemini)."
+            );
+        }
+
+        this._finalizeGoogleRequest(googleRequest);
+        this.logger.info("[Adapter] Claude to Google translation complete.");
+        return { cleanModelName, googleRequest };
+    }
+
+    /**
+     * Convert Google streaming response chunk to Claude format
+     * @param {string} googleChunk - The Google response chunk
+     * @param {string} modelName - The model name
+     * @param {object} streamState - State object to track streaming progress
+     */
+    translateGoogleToClaudeStream(googleChunk, modelName = "gemini-2.5-flash-lite", streamState = null) {
+        if (!streamState) {
+            streamState = {};
+        }
+        if (!googleChunk || googleChunk.trim() === "") {
+            return null;
+        }
+
+        let jsonString = googleChunk;
+        if (jsonString.startsWith("data: ")) {
+            jsonString = jsonString.substring(6).trim();
+        }
+        if (jsonString === "[DONE]") {
+            return null;
+        }
+
+        let googleResponse;
+        try {
+            googleResponse = JSON.parse(jsonString);
+        } catch (e) {
+            this.logger.warn(`[Adapter] Unable to parse Google JSON chunk for Claude: ${jsonString}`);
+            return null;
+        }
+
+        const candidate = googleResponse.candidates?.[0];
+        const usage = googleResponse.usageMetadata;
+
+        // Update stream state with usage if available
+        if (usage) {
+            const inputTokens = (usage.promptTokenCount || 0) + (usage.toolUsePromptTokenCount || 0);
+            const outputTokens = (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0);
+
+            if (inputTokens > 0) streamState.inputTokens = inputTokens;
+            streamState.outputTokens = outputTokens;
+        }
+
+        // Initialize stream state
+        if (!streamState.messageId) {
+            streamState.messageId = `msg_${this._generateRequestId()}`;
+            streamState.contentBlockIndex = 0;
+            if (!streamState.inputTokens) streamState.inputTokens = 0;
+            if (!streamState.outputTokens) streamState.outputTokens = 0;
+        }
+
+        if (!candidate) {
+            if (googleResponse.promptFeedback) {
+                this.logger.warn(`[Adapter] Google returned promptFeedback for Claude stream`);
+            }
+            return null;
+        }
+
+        const events = [];
+
+        // Send message_start event once
+        if (!streamState.messageStartSent) {
+            events.push({
+                message: {
+                    content: [],
+                    id: streamState.messageId,
+                    model: modelName,
+                    role: "assistant",
+                    stop_reason: null,
+                    stop_sequence: null,
+                    type: "message",
+                    usage: {
+                        input_tokens: streamState.inputTokens || 0,
+                        output_tokens: 0,
+                    },
+                },
+                type: "message_start",
+            });
+            streamState.messageStartSent = true;
+        }
+
+        // Process content parts
+        if (candidate.content && Array.isArray(candidate.content.parts)) {
+            for (const part of candidate.content.parts) {
+                if (part.thought === true && part.text) {
+                    // Thinking content
+                    if (!streamState.thinkingBlockStarted) {
+                        events.push({
+                            content_block: { thinking: "", type: "thinking" },
+                            index: streamState.contentBlockIndex,
+                            type: "content_block_start",
+                        });
+                        streamState.thinkingBlockStarted = true;
+                        streamState.thinkingBlockIndex = streamState.contentBlockIndex;
+                        streamState.contentBlockIndex++;
+                    }
+                    events.push({
+                        delta: { thinking: part.text, type: "thinking_delta" },
+                        index: streamState.thinkingBlockIndex,
+                        type: "content_block_delta",
+                    });
+                } else if (part.text) {
+                    // Regular text content
+                    if (streamState.thinkingBlockStarted && !streamState.thinkingBlockStopped) {
+                        events.push({
+                            index: streamState.thinkingBlockIndex,
+                            type: "content_block_stop",
+                        });
+                        streamState.thinkingBlockStopped = true;
+                    }
+                    if (!streamState.textBlockStarted) {
+                        events.push({
+                            content_block: { text: "", type: "text" },
+                            index: streamState.contentBlockIndex,
+                            type: "content_block_start",
+                        });
+                        streamState.textBlockStarted = true;
+                        streamState.textBlockIndex = streamState.contentBlockIndex;
+                        streamState.contentBlockIndex++;
+                    }
+                    events.push({
+                        delta: { text: part.text, type: "text_delta" },
+                        index: streamState.textBlockIndex,
+                        type: "content_block_delta",
+                    });
+                } else if (part.inlineData) {
+                    // Image output - convert to markdown image format for streaming
+                    // Close thinking block if open
+                    if (streamState.thinkingBlockStarted && !streamState.thinkingBlockStopped) {
+                        events.push({
+                            index: streamState.thinkingBlockIndex,
+                            type: "content_block_stop",
+                        });
+                        streamState.thinkingBlockStopped = true;
+                    }
+                    // Start text block if not started
+                    if (!streamState.textBlockStarted) {
+                        events.push({
+                            content_block: { text: "", type: "text" },
+                            index: streamState.contentBlockIndex,
+                            type: "content_block_start",
+                        });
+                        streamState.textBlockStarted = true;
+                        streamState.textBlockIndex = streamState.contentBlockIndex;
+                        streamState.contentBlockIndex++;
+                    }
+                    // Send image as markdown text delta
+                    const imageMarkdown = `![Generated Image](data:${part.inlineData.mimeType};base64,${part.inlineData.data})`;
+                    events.push({
+                        delta: { text: imageMarkdown, type: "text_delta" },
+                        index: streamState.textBlockIndex,
+                        type: "content_block_delta",
+                    });
+                    this.logger.info("[Adapter] Successfully parsed image from streaming response chunk.");
+                } else if (part.functionCall) {
+                    // Tool use
+                    const toolUseId = `toolu_${this._generateRequestId()}`;
+                    events.push({
+                        content_block: {
+                            id: toolUseId,
+                            input: {},
+                            name: part.functionCall.name,
+                            type: "tool_use",
+                        },
+                        index: streamState.contentBlockIndex,
+                        type: "content_block_start",
+                    });
+                    events.push({
+                        delta: {
+                            partial_json: JSON.stringify(part.functionCall.args || {}),
+                            type: "input_json_delta",
+                        },
+                        index: streamState.contentBlockIndex,
+                        type: "content_block_delta",
+                    });
+                    events.push({
+                        index: streamState.contentBlockIndex,
+                        type: "content_block_stop",
+                    });
+                    streamState.contentBlockIndex++;
+                    streamState.hasToolUse = true;
+                }
+            }
+        }
+
+        // Handle finish
+        if (candidate.finishReason) {
+            // Close any open blocks
+            if (streamState.textBlockStarted && !streamState.textBlockStopped) {
+                events.push({
+                    index: streamState.textBlockIndex,
+                    type: "content_block_stop",
+                });
+                streamState.textBlockStopped = true;
+            }
+            if (streamState.thinkingBlockStarted && !streamState.thinkingBlockStopped) {
+                events.push({
+                    index: streamState.thinkingBlockIndex,
+                    type: "content_block_stop",
+                });
+                streamState.thinkingBlockStopped = true;
+            }
+
+            // Determine stop reason
+            let stopReason = "end_turn";
+            if (streamState.hasToolUse) {
+                stopReason = "tool_use";
+            } else if (candidate.finishReason === "MAX_TOKENS") {
+                stopReason = "max_tokens";
+            } else if (candidate.finishReason === "STOP") {
+                stopReason = "end_turn";
+            }
+
+            events.push({
+                delta: {
+                    stop_reason: stopReason,
+                    stop_sequence: null,
+                },
+                type: "message_delta",
+                usage: {
+                    output_tokens: streamState.outputTokens || 0,
+                },
+            });
+
+            events.push({ type: "message_stop" });
+        }
+
+        if (events.length === 0) return null;
+
+        return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+    }
+
+    /**
+     * Convert Google non-stream response to Claude format
+     */
+    convertGoogleToClaudeNonStream(googleResponse, modelName = "gemini-2.5-flash-lite") {
+        const candidate = googleResponse.candidates?.[0];
+        const usage = googleResponse.usageMetadata || {};
+
+        const messageId = `msg_${this._generateRequestId()}`;
+        const content = [];
+
+        if (!candidate) {
+            return {
+                content: [{ text: "", type: "text" }],
+                id: messageId,
+                model: modelName,
+                role: "assistant",
+                stop_reason: "end_turn",
+                stop_sequence: null,
+                type: "message",
+                usage: {
+                    input_tokens: (usage.promptTokenCount || 0) + (usage.toolUsePromptTokenCount || 0),
+                    // Match OpenAI logic: sum candidates tokens + thoughts tokens
+                    output_tokens: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0),
+                },
+            };
+        }
+
+        let hasToolUse = false;
+
+        if (candidate.content && Array.isArray(candidate.content.parts)) {
+            for (const part of candidate.content.parts) {
+                if (part.thought === true && part.text) {
+                    content.push({
+                        thinking: part.text,
+                        type: "thinking",
+                    });
+                } else if (part.text) {
+                    content.push({
+                        text: part.text,
+                        type: "text",
+                    });
+                } else if (part.inlineData) {
+                    // Image output - convert to base64 format
+                    content.push({
+                        text: `![Generated Image](data:${part.inlineData.mimeType};base64,${part.inlineData.data})`,
+                        type: "text",
+                    });
+                } else if (part.functionCall) {
+                    hasToolUse = true;
+                    content.push({
+                        id: `toolu_${this._generateRequestId()}`,
+                        input: part.functionCall.args || {},
+                        name: part.functionCall.name,
+                        type: "tool_use",
+                    });
+                }
+            }
+        }
+
+        // Determine stop reason
+        let stopReason = "end_turn";
+        if (hasToolUse) {
+            stopReason = "tool_use";
+        } else if (candidate.finishReason === "MAX_TOKENS") {
+            stopReason = "max_tokens";
+        } else if (candidate.finishReason === "SAFETY") {
+            stopReason = "end_turn"; // Claude doesn't have a direct equivalent
+        }
+
+        return {
+            content: content.length > 0 ? content : [{ text: "", type: "text" }],
+            id: messageId,
+            model: modelName,
+            role: "assistant",
+            stop_reason: stopReason,
+            stop_sequence: null,
+            type: "message",
+            usage: {
+                input_tokens: (usage.promptTokenCount || 0) + (usage.toolUsePromptTokenCount || 0),
+                // Match OpenAI logic: sum candidates tokens + thoughts tokens
+                output_tokens: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0),
+            },
         };
     }
 }

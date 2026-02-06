@@ -2,14 +2,14 @@
 
 中文文档 | [English](README_EN.md)
 
-一个将 Google AI Studio 网页端封装为兼容 OpenAI API 和 Gemini API 的工具。该服务将充当代理，将 API 请求转换为与 AI Studio 网页界面的浏览器交互。
+一个将 Google AI Studio 网页端封装为兼容 OpenAI API、Gemini API 和 Anthropic API 的工具。该服务将充当代理，将 API 请求转换为与 AI Studio 网页界面的浏览器交互。
 
 ## ✨ 功能特性
 
-- 🔄 **API 兼容性**：同时兼容 OpenAI API 和 Gemini API 格式
+- 🔄 **API 兼容性**：同时兼容 OpenAI API、Gemini API 和 Anthropic API 格式
 - 🌐 **网页自动化**：使用浏览器自动化技术与 AI Studio 网页界面交互
 - 🔐 **身份验证**：基于 API 密钥的安全认证机制
-- 🔧 **支持工具调用**：OpenAI 和 Gemini 接口均支持 Tool Calls (Function Calling)
+- 🔧 **支持工具调用**：OpenAI、Gemini 和 Anthropic 接口均支持 Tool Calls (Function Calling)
 - 📝 **模型支持**：通过 AI Studio 访问各种 Gemini 模型，包括生图模型和 TTS 语音合成模型
 - 🎨 **主页展示控制**：提供可视化的 Web 控制台，支持账号管理、VNC 登录等操作
 
@@ -34,6 +34,8 @@
    - 自动下载 Camoufox 浏览器（一个注重隐私的 Firefox 分支）
    - 启动浏览器并自动导航到 AI Studio
    - 在本地保存您的身份验证凭据
+
+   > 💡 **提示：** 如果下载 Camoufox 浏览器失败或等待太久，可以[自行点击此处下载](https://github.com/daijro/camoufox/releases/tag/v135.0.1-beta.24)，然后设置环境变量 `CAMOUFOX_EXECUTABLE_PATH` 为可执行文件的路径（支持绝对和相对路径）。
 
 3. 配置环境变量（可选）：
 
@@ -204,6 +206,14 @@ sudo docker compose down
 - `POST /v1beta/models/{model_name}:batchEmbedContents`: 批量生成文本嵌入向量。
 - `POST /v1beta/models/{model_name}:predict`: Imagen 系列模型图像生成。
 
+### 👤 Anthropic 兼容 API
+
+此端点处理后转发到官方 Gemini API 格式端点。
+
+- `GET /v1/models`: 列出模型。
+- `POST /v1/messages`: 聊天消息补全，支持非流式、真流式和假流式。
+- `POST /v1/messages/count_tokens`: 计算消息中的 token 数量。
+
 > 📖 详细的 API 使用示例请参阅：[API 使用示例文档](docs/zh/api-examples.md)
 
 ## 🧰 相关配置
@@ -238,12 +248,13 @@ sudo docker compose down
 
 #### 🗒️ 其他配置
 
-| 变量名              | 描述                                             | 默认值  |
-| :------------------ | :----------------------------------------------- | :------ |
-| `STREAMING_MODE`    | 流式传输模式。`real` 为真流式，`fake` 为假流式。 | `real`  |
-| `FORCE_THINKING`    | 强制为所有请求启用思考模式。                     | `false` |
-| `FORCE_WEB_SEARCH`  | 强制为所有请求启用网络搜索。                     | `false` |
-| `FORCE_URL_CONTEXT` | 强制为所有请求启用 URL 上下文。                  | `false` |
+| 变量名                     | 描述                                                                                | 默认值   |
+| :------------------------- | :---------------------------------------------------------------------------------- | :------- |
+| `STREAMING_MODE`           | 流式传输模式。`real` 为真流式，`fake` 为假流式。                                    | `real`   |
+| `FORCE_THINKING`           | 强制为所有请求启用思考模式。                                                        | `false`  |
+| `FORCE_WEB_SEARCH`         | 强制为所有请求启用网络搜索。                                                        | `false`  |
+| `FORCE_URL_CONTEXT`        | 强制为所有请求启用 URL 上下文。                                                     | `false`  |
+| `CAMOUFOX_EXECUTABLE_PATH` | Camoufox 浏览器的可执行文件路径（支持绝对或相对路径）。仅在手动下载浏览器时需配置。 | 自动检测 |
 
 ### 🧠 模型列表配置
 
