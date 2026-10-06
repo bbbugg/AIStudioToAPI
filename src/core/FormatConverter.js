@@ -714,152 +714,6 @@ class FormatConverter {
     }
 
     /**
-     * Convert JSON Schema to Gemini responseSchema format.
-     * Handles nullable types, enums, and ensures uppercase types.
-     *
-     * @param {Object} obj - The schema object to convert
-     * @param {boolean} [isProperties=false] - If true, the current object is a map of property definitions, so keys should not be filtered
-     * @returns {Object} The converted schema
-     */
-    _convertSchemaToGemini(obj, isProperties = false) {
-        if (!obj || typeof obj !== "object") return obj;
-
-        const result = Array.isArray(obj) ? [] : {};
-        const unsupportedKeys = [
-            "$schema",
-            "additionalProperties",
-            "ref",
-            "$ref",
-            "propertyNames",
-            "patternProperties",
-            "unevaluatedProperties",
-            "exclusiveMinimum",
-            "exclusiveMaximum",
-            "const",
-            "$comment",
-            "enumDescriptions",
-            "examples",
-            "$defs",
-            "id",
-        ];
-
-        for (const key of Object.keys(obj)) {
-            // ONLY Filter metadata keywords if NOT a property name (isProperties is false)
-            if (!isProperties && unsupportedKeys.includes(key)) {
-                continue;
-            }
-
-            // Handle anyOf specially (only when it is a schema keyword),
-            // but `{"type":"OBJECT","properties":{"isNewTopic":{"type":"BOOLEAN"},"title":{"anyOf":[{"type":"STRING"},{"type":"NULL"}]}},"required":["isNewTopic","title"]}` is right, need to confirm
-            if (key === "anyOf" && !isProperties) {
-                if (Array.isArray(obj[key])) {
-                    const variants = obj[key];
-                    const hasNull = variants.some(v => v.type === "null");
-                    const nonNullVariants = variants.filter(v => v.type !== "null");
-
-                    if (hasNull) {
-                        result.nullable = true;
-                    }
-
-                    if (nonNullVariants.length === 1) {
-                        // Collapse single variant. Reset isProperties to false for the variant's schema.
-                        const converted = this._convertSchemaToGemini(nonNullVariants[0], false);
-                        // Merge converted properties into result
-                        Object.assign(result, converted);
-                        if (hasNull) result.nullable = true;
-                        continue; // Skip setting 'anyOf' explicitly
-                    } else if (nonNullVariants.length > 0) {
-                        // Keep anyOf for multiple variants. Reset isProperties for sub-schemas.
-                        result.anyOf = nonNullVariants.map(v => this._convertSchemaToGemini(v, false));
-                        continue;
-                    } else if (hasNull) {
-                        // Only null type? Keep it as nullable without forcing a specific type.
-                        continue;
-                    }
-                }
-            }
-
-            // Handle type specially (only when it is a schema keyword)
-            if (key === "type" && !isProperties) {
-                if (Array.isArray(obj[key])) {
-                    // Handle nullable types like ["string", "null"]
-                    const types = obj[key];
-                    const nonNullTypes = types.filter(t => t !== "null");
-                    const hasNull = types.includes("null");
-
-                    if (hasNull) {
-                        result.nullable = true;
-                    }
-
-                    if (nonNullTypes.length === 1) {
-                        // Single non-null type: use it directly
-                        result[key] = nonNullTypes[0].toUpperCase();
-                    } else if (nonNullTypes.length > 1) {
-                        // Gemini responseSchema doesn't support array types, use anyOf.
-                        result.anyOf = nonNullTypes.map(t => ({
-                            type: t.toUpperCase(),
-                        }));
-                    } else {
-                        // Only null type, default to STRING
-                        result[key] = "STRING";
-                    }
-                } else if (typeof obj[key] === "string") {
-                    // Convert lowercase type to uppercase for Gemini
-                    result[key] = obj[key].toUpperCase();
-                } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                    // Type being an object is a sub-schema definition, not property name mapping
-                    result[key] = this._convertSchemaToGemini(obj[key], false);
-                } else {
-                    result[key] = obj[key];
-                }
-            } else if (key === "enum" && !isProperties) {
-                // Ensure all responseSchema enum values are strings.
-                if (Array.isArray(obj[key])) {
-                    result[key] = obj[key].map(String);
-                } else if (obj[key] !== undefined && obj[key] !== null) {
-                    result[key] = [String(obj[key])];
-                }
-                result["type"] = "STRING";
-            } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                // Recursion logic:
-                // - If key is 'properties', next level is a map of property NAMES. Set isProperties = true.
-                // - Otherwise, if we were currently in a properties map (isProperties is true),
-                //   the value is a schema definition. For its keys, isProperties MUST be false.
-                const nextIsProperties = key === "properties";
-                const recursionFlag = isProperties ? false : nextIsProperties;
-
-                result[key] = this._convertSchemaToGemini(obj[key], recursionFlag);
-            } else {
-                result[key] = obj[key];
-            }
-        }
-
-        if (!isProperties && Array.isArray(obj.enumDescriptions) && obj.enumDescriptions.length > 0) {
-            const enumValues = Array.isArray(result.enum) ? result.enum : [];
-            const enumDescriptionLines = obj.enumDescriptions
-                .map((description, index) => {
-                    if (description === undefined || description === null || description === "") {
-                        return null;
-                    }
-
-                    const enumValue = enumValues[index];
-                    const label = enumValue === undefined ? `value ${index + 1}` : String(enumValue);
-                    return `- ${label}: ${description}`;
-                })
-                .filter(Boolean);
-
-            if (enumDescriptionLines.length > 0) {
-                const enumDescriptionText = `Enum descriptions:\n${enumDescriptionLines.join("\n")}`;
-                result.description = result.description
-                    ? `${result.description}\n\n${enumDescriptionText}`
-                    : enumDescriptionText;
-            }
-        }
-
-        return result;
-    }
-
-    /**
      * Convert OpenAI request format to Google Gemini format
      * @param {object} openaiBody - OpenAI format request body
      * @returns {Promise<{ googleRequest: object, cleanModelName: string, modelStreamingMode: ("real"|"fake"|null) }>}
@@ -1358,7 +1212,7 @@ class FormatConverter {
         }
 
         // Handle response_format for structured output
-        // Convert OpenAI response_format to Gemini responseSchema
+        // Pass the JSON Schema through without converting its types or constraints.
         const responseFormat = openaiBody.response_format;
         if (responseFormat) {
             if (responseFormat.type === "json_schema" && responseFormat.json_schema) {
@@ -1366,29 +1220,12 @@ class FormatConverter {
                 const jsonSchema = responseFormat.json_schema;
                 const schema = jsonSchema.schema;
 
-                if (schema) {
-                    try {
-                        this.logger.debug(`[Adapter] Debug: Converting OpenAI JSON Schema: ${JSON.stringify(schema)}`);
-
-                        const convertedSchema = this._convertSchemaToGemini(schema);
-
-                        this.logger.debug(
-                            `[Adapter] Debug: Converted Gemini JSON Schema: ${JSON.stringify(convertedSchema)}`
-                        );
-
-                        // Set Gemini config for structured output
-                        generationConfig.responseMimeType = "application/json";
-                        generationConfig.responseSchema = convertedSchema;
-
-                        this.logger.info(
-                            `[Adapter] Converted OpenAI response_format to Gemini responseSchema: ${jsonSchema.name || "unnamed"}`
-                        );
-                    } catch (error) {
-                        this.logger.error(
-                            `[Adapter] Failed to convert response_format schema: ${error.message}`,
-                            error
-                        );
-                    }
+                if (schema !== undefined && schema !== null) {
+                    generationConfig.responseMimeType = "application/json";
+                    generationConfig._responseJsonSchema = schema;
+                    this.logger.info(
+                        `[Adapter] Forwarded OpenAI response_format as Gemini _responseJsonSchema: ${jsonSchema.name || "unnamed"}`
+                    );
                 }
             } else if (responseFormat.type === "json_object") {
                 // Simple JSON mode without schema validation
@@ -4131,20 +3968,16 @@ class FormatConverter {
                 let schema = claudeBody.output_format.schema;
                 let schemaName = "structured_output";
 
-                if (!schema && claudeBody.output_format.json_schema) {
+                if ((schema === undefined || schema === null) && claudeBody.output_format.json_schema) {
                     schema = claudeBody.output_format.json_schema.schema;
                     schemaName = claudeBody.output_format.json_schema.name || schemaName;
                 }
 
-                if (schema) {
-                    this.logger.debug(`[Adapter] Debug: Converting Claude JSON Schema: ${JSON.stringify(schema)}`);
+                if (schema !== undefined && schema !== null) {
                     generationConfig.responseMimeType = "application/json";
-                    generationConfig.responseSchema = this._convertSchemaToGemini(schema);
-                    this.logger.debug(
-                        `[Adapter] Debug: Converted Gemini JSON Schema: ${JSON.stringify(generationConfig.responseSchema)}`
-                    );
+                    generationConfig._responseJsonSchema = schema;
                     this.logger.info(
-                        `[Adapter] Converted Claude output_format to Gemini responseSchema. Name: ${schemaName}`
+                        `[Adapter] Forwarded Claude output_format as Gemini _responseJsonSchema. Name: ${schemaName}`
                     );
                 }
             } else if (claudeBody.output_format.type === "json_object") {
@@ -4158,15 +3991,11 @@ class FormatConverter {
         // Handle Claude's output_config (new format)
         if (claudeBody.output_config && claudeBody.output_config.format) {
             const format = claudeBody.output_config.format;
-            if (format.type === "json_schema" && format.schema) {
-                this.logger.debug(`[Adapter] Debug: Converting Claude JSON Schema: ${JSON.stringify(format.schema)}`);
+            if (format.type === "json_schema" && format.schema !== undefined && format.schema !== null) {
                 generationConfig.responseMimeType = "application/json";
-                generationConfig.responseSchema = this._convertSchemaToGemini(format.schema);
-                this.logger.debug(
-                    `[Adapter] Debug: Converted Gemini JSON Schema: ${JSON.stringify(generationConfig.responseSchema)}`
-                );
+                generationConfig._responseJsonSchema = format.schema;
                 this.logger.info(
-                    `[Adapter] Converted Claude output_config to Gemini responseSchema. Title: ${format.schema.title || "untitled"}`
+                    `[Adapter] Forwarded Claude output_config as Gemini _responseJsonSchema. Title: ${format.schema.title || "untitled"}`
                 );
             }
         }
@@ -5602,20 +5431,12 @@ class FormatConverter {
                 // text.format = { type: "json_schema", name, schema, strict }
                 const jsonSchemaConfig = textFormat.format;
                 const schema = jsonSchemaConfig.schema;
-                if (schema) {
-                    try {
-                        const convertedSchema = this._convertSchemaToGemini(schema);
-                        generationConfig.responseMimeType = "application/json";
-                        generationConfig.responseSchema = convertedSchema;
-                        this.logger.info(
-                            `[Adapter] Converted OpenAI Response API text.format to Gemini responseSchema: ${jsonSchemaConfig.name || "unnamed"}`
-                        );
-                    } catch (error) {
-                        this.logger.error(
-                            `[Adapter] Failed to convert OpenAI Response API text.format schema: ${error.message}`,
-                            error
-                        );
-                    }
+                if (schema !== undefined && schema !== null) {
+                    generationConfig.responseMimeType = "application/json";
+                    generationConfig._responseJsonSchema = schema;
+                    this.logger.info(
+                        `[Adapter] Forwarded OpenAI Response API text.format as Gemini _responseJsonSchema: ${jsonSchemaConfig.name || "unnamed"}`
+                    );
                 }
             } else if (formatType === "json_object") {
                 generationConfig.responseMimeType = "application/json";

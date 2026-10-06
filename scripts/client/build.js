@@ -388,20 +388,66 @@ class RequestProcessor {
     }
 
     _removeStructuredOutputConfig(bodyObj, { preserveResponseFormat = false } = {}) {
-        const generationConfig = bodyObj.generationConfig;
-        if (!generationConfig) {
-            return;
-        }
+        const structuredOutputKeys = [
+            "responseMimeType",
+            "response_mime_type",
+            "responseSchema",
+            "response_schema",
+            "responseJsonSchema",
+            "response_json_schema",
+            "_responseJsonSchema",
+            "_response_json_schema",
+        ];
 
-        const structuredOutputKeys = ["responseMimeType", "responseSchema", "responseJsonSchema"];
-        if (!preserveResponseFormat) {
-            structuredOutputKeys.push("responseFormat");
-        }
-
-        structuredOutputKeys.forEach(key => {
-            if (Object.prototype.hasOwnProperty.call(generationConfig, key)) {
-                delete generationConfig[key];
+        for (const generationConfig of [bodyObj.generationConfig, bodyObj.generation_config]) {
+            if (!generationConfig || typeof generationConfig !== "object") {
+                continue;
             }
+
+            structuredOutputKeys.forEach(key => delete generationConfig[key]);
+            for (const key of ["responseFormat", "response_format"]) {
+                const responseFormat = generationConfig[key];
+                if (!preserveResponseFormat) {
+                    delete generationConfig[key];
+                } else if (responseFormat && typeof responseFormat === "object") {
+                    // Preserve modality settings such as audio, but remove text structured output.
+                    delete responseFormat.text;
+                    if (Object.keys(responseFormat).length === 0) {
+                        delete generationConfig[key];
+                    }
+                }
+            }
+        }
+    }
+
+    _isJsonOutput(bodyObj) {
+        const schemaKeys = [
+            "responseSchema",
+            "response_schema",
+            "responseJsonSchema",
+            "response_json_schema",
+            "_responseJsonSchema",
+            "_response_json_schema",
+        ];
+        return [bodyObj.generationConfig, bodyObj.generation_config].some(generationConfig => {
+            if (!generationConfig || typeof generationConfig !== "object") {
+                return false;
+            }
+            if (
+                generationConfig.responseMimeType === "application/json" ||
+                generationConfig.response_mime_type === "application/json" ||
+                schemaKeys.some(key => Object.prototype.hasOwnProperty.call(generationConfig, key))
+            ) {
+                return true;
+            }
+            return [generationConfig.responseFormat, generationConfig.response_format].some(format => {
+                const text = format?.text;
+                return (
+                    text &&
+                    (Object.prototype.hasOwnProperty.call(text, "schema") ||
+                        ["APPLICATION_JSON", "application/json", 1].includes(text.mimeType ?? text.mime_type))
+                );
+            });
         });
     }
 
@@ -533,7 +579,7 @@ class RequestProcessor {
                     // If model starts with gemini-2 and response format is JSON, remove tools/toolConfig
                     // This prevents 400 errors as some Gemini 2 variants don't support combined Tool + Structured Output
                     const isGemini2 = requestSpec.path.match(/\/models\/gemini-2/);
-                    const isJsonMode = bodyObj.generationConfig?.responseMimeType === "application/json";
+                    const isJsonMode = this._isJsonOutput(bodyObj);
 
                     if (isGemini2 && isJsonMode) {
                         let keysRemoved = 0;
