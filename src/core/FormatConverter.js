@@ -1220,15 +1220,14 @@ class FormatConverter {
                 const schema = jsonSchema.schema;
 
                 if (schema !== undefined && schema !== null) {
-                    generationConfig.responseMimeType = "application/json";
-                    generationConfig._responseJsonSchema = schema;
+                    generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON", schema } };
                     this.logger.info(
-                        `[Adapter] Forwarded OpenAI response_format as Gemini _responseJsonSchema: ${jsonSchema.name || "unnamed"}`
+                        `[Adapter] Forwarded OpenAI response_format as Gemini responseFormat.text.schema: ${jsonSchema.name || "unnamed"}`
                     );
                 }
             } else if (responseFormat.type === "json_object") {
                 // Simple JSON mode without schema validation
-                generationConfig.responseMimeType = "application/json";
+                generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON" } };
                 this.logger.info("[Adapter] Enabled JSON mode (no schema validation)");
             } else if (responseFormat.type === "text") {
                 // Explicit text mode (default behavior, no action needed)
@@ -3973,17 +3972,18 @@ class FormatConverter {
                 }
 
                 if (schema !== undefined && schema !== null) {
-                    generationConfig.responseMimeType = "application/json";
-                    generationConfig._responseJsonSchema = schema;
+                    generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON", schema } };
                     this.logger.info(
-                        `[Adapter] Forwarded Claude output_format as Gemini _responseJsonSchema. Name: ${schemaName}`
+                        `[Adapter] Forwarded Claude output_format as Gemini responseFormat.text.schema. Name: ${schemaName}`
                     );
                 }
             } else if (claudeBody.output_format.type === "json_object") {
-                generationConfig.responseMimeType = "application/json";
-                this.logger.info(`[Adapter] Converted Claude output_format (json_object) to Gemini responseMimeType.`);
+                generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON" } };
+                this.logger.info(
+                    `[Adapter] Converted Claude output_format (json_object) to Gemini responseFormat.text.`
+                );
             } else if (claudeBody.output_format.type === "text") {
-                generationConfig.responseMimeType = "text/plain";
+                generationConfig.responseFormat = { text: { mimeType: "TEXT_PLAIN" } };
             }
         }
 
@@ -3991,10 +3991,9 @@ class FormatConverter {
         if (claudeBody.output_config && claudeBody.output_config.format) {
             const format = claudeBody.output_config.format;
             if (format.type === "json_schema" && format.schema !== undefined && format.schema !== null) {
-                generationConfig.responseMimeType = "application/json";
-                generationConfig._responseJsonSchema = format.schema;
+                generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON", schema: format.schema } };
                 this.logger.info(
-                    `[Adapter] Forwarded Claude output_config as Gemini _responseJsonSchema. Title: ${format.schema.title || "untitled"}`
+                    `[Adapter] Forwarded Claude output_config as Gemini responseFormat.text.schema. Title: ${format.schema.title || "untitled"}`
                 );
             }
         }
@@ -5431,16 +5430,15 @@ class FormatConverter {
                 const jsonSchemaConfig = textFormat.format;
                 const schema = jsonSchemaConfig.schema;
                 if (schema !== undefined && schema !== null) {
-                    generationConfig.responseMimeType = "application/json";
-                    generationConfig._responseJsonSchema = schema;
+                    generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON", schema } };
                     this.logger.info(
-                        `[Adapter] Forwarded OpenAI Response API text.format as Gemini _responseJsonSchema: ${jsonSchemaConfig.name || "unnamed"}`
+                        `[Adapter] Forwarded OpenAI Response API text.format as Gemini responseFormat.text.schema: ${jsonSchemaConfig.name || "unnamed"}`
                     );
                 }
             } else if (formatType === "json_object") {
-                generationConfig.responseMimeType = "application/json";
+                generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON" } };
                 this.logger.info(
-                    "[Adapter] Set responseMimeType to application/json for OpenAI Response API json_object format"
+                    "[Adapter] Set responseFormat.text.mimeType to APPLICATION_JSON for OpenAI Response API json_object format"
                 );
             }
         }
