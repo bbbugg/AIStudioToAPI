@@ -4256,7 +4256,7 @@ class RequestHandler {
 
         // Pre-process native Google requests
         // 1. Ensure thoughtSignature for functionCall (not functionResponse)
-        // 2. Normalize type values in legacy tool parameters to uppercase Gemini Type enums
+        // 2. Normalize type values in legacy tool parameter/response schemas to uppercase Gemini Type enums
         // 3. Normalize responseSchema type values to Google Type enums
         if (req.method === "POST" && bodyObj) {
             if (bodyObj.contents) {

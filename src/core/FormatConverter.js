@@ -632,7 +632,42 @@ class FormatConverter {
     }
 
     /**
-     * Normalize schema type values in native Gemini tool declarations.
+     * Copy a legacy Google Schema and normalize only schema-node Type enums.
+     * Instance values (default/example/enum) and JSON Schema extensions remain untouched.
+     */
+    _normalizeGeminiSchemaTypes(schema) {
+        if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+            return schema;
+        }
+
+        const normalized = { ...schema };
+        if (typeof schema.type === "string") {
+            normalized.type = schema.type.toUpperCase();
+        }
+
+        // Schema.properties is a map of names to schemas, not a schema itself.
+        if (schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)) {
+            normalized.properties = Object.fromEntries(
+                Object.entries(schema.properties).map(([name, child]) => [
+                    name,
+                    this._normalizeGeminiSchemaTypes(child),
+                ])
+            );
+        }
+        if (schema.items) {
+            normalized.items = this._normalizeGeminiSchemaTypes(schema.items);
+        }
+        for (const key of ["anyOf", "any_of"]) {
+            if (Array.isArray(schema[key])) {
+                normalized[key] = schema[key].map(child => this._normalizeGeminiSchemaTypes(child));
+            }
+        }
+
+        return normalized;
+    }
+
+    /**
+     * Normalize legacy parameter and response schemas in native Gemini tool declarations.
      * @param {object} geminiBody - Gemini format request body
      * @returns {object} - Modified request body with normalized tool schema types
      */
@@ -640,26 +675,6 @@ class FormatConverter {
         if (!geminiBody || !geminiBody.tools || !Array.isArray(geminiBody.tools)) {
             return geminiBody;
         }
-
-        // Convert lowercase type values to Google Type enums recursively.
-        const sanitizeSchema = obj => {
-            if (!obj || typeof obj !== "object") return obj;
-
-            const result = Array.isArray(obj) ? [] : {};
-
-            for (const key of Object.keys(obj)) {
-                if (key === "type" && typeof obj[key] === "string") {
-                    // Convert lowercase type to uppercase for Gemini
-                    result[key] = obj[key].toUpperCase();
-                } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                    result[key] = sanitizeSchema(obj[key]);
-                } else {
-                    result[key] = obj[key];
-                }
-            }
-
-            return result;
-        };
 
         // Process each tool
         for (const tool of geminiBody.tools) {
@@ -669,8 +684,11 @@ class FormatConverter {
                     : tool.function_declarations;
             if (declarations && Array.isArray(declarations)) {
                 for (const funcDecl of declarations) {
-                    if (funcDecl.parameters) {
-                        funcDecl.parameters = sanitizeSchema(funcDecl.parameters);
+                    if (!funcDecl || typeof funcDecl !== "object") continue;
+                    for (const key of ["parameters", "response"]) {
+                        if (funcDecl[key]) {
+                            funcDecl[key] = this._normalizeGeminiSchemaTypes(funcDecl[key]);
+                        }
                     }
                 }
             }
@@ -690,26 +708,7 @@ class FormatConverter {
             return geminiBody;
         }
 
-        const normalizeSchemaTypes = schema => {
-            if (!schema || typeof schema !== "object") {
-                return;
-            }
-
-            if (Array.isArray(schema)) {
-                schema.forEach(normalizeSchemaTypes);
-                return;
-            }
-
-            for (const [key, value] of Object.entries(schema)) {
-                if (key === "type" && typeof value === "string") {
-                    schema[key] = value.toUpperCase();
-                } else if (value && typeof value === "object") {
-                    normalizeSchemaTypes(value);
-                }
-            }
-        };
-
-        normalizeSchemaTypes(responseSchema);
+        geminiBody.generationConfig.responseSchema = this._normalizeGeminiSchemaTypes(responseSchema);
         return geminiBody;
     }
 
