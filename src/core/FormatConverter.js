@@ -1226,9 +1226,11 @@ class FormatConverter {
                     );
                 }
             } else if (responseFormat.type === "json_object") {
-                // Simple JSON mode without schema validation
-                generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON" } };
-                this.logger.info("[Adapter] Enabled JSON mode (no schema validation)");
+                // MIME alone may not constrain output on the AI Studio path; allow arbitrary object properties.
+                generationConfig.responseFormat = {
+                    text: { mimeType: "APPLICATION_JSON", schema: { additionalProperties: true, type: "object" } },
+                };
+                this.logger.info("[Adapter] Enabled JSON object mode with an open object schema");
             } else if (responseFormat.type === "text") {
                 // Explicit text mode (default behavior, no action needed)
                 this.logger.debug("[Adapter] Response format set to text (default)");
@@ -3978,7 +3980,9 @@ class FormatConverter {
                     );
                 }
             } else if (claudeBody.output_format.type === "json_object") {
-                generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON" } };
+                generationConfig.responseFormat = {
+                    text: { mimeType: "APPLICATION_JSON", schema: { additionalProperties: true, type: "object" } },
+                };
                 this.logger.info(
                     `[Adapter] Converted Claude output_format (json_object) to Gemini responseFormat.text.`
                 );
@@ -5436,7 +5440,9 @@ class FormatConverter {
                     );
                 }
             } else if (formatType === "json_object") {
-                generationConfig.responseFormat = { text: { mimeType: "APPLICATION_JSON" } };
+                generationConfig.responseFormat = {
+                    text: { mimeType: "APPLICATION_JSON", schema: { additionalProperties: true, type: "object" } },
+                };
                 this.logger.info(
                     "[Adapter] Set responseFormat.text.mimeType to APPLICATION_JSON for OpenAI Response API json_object format"
                 );
